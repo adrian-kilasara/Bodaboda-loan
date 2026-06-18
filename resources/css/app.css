@@ -1,0 +1,84 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../**/*.blade.php';
+@source '../**/*.js';
+
+@theme {
+    --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+    --color-primary:      #1E6F3C;
+    --color-primary-dark: #15522C;
+    --color-primary-light:#E8F5EE;
+    --color-accent:       #F2A900;
+    --color-accent-light: #FFF8E6;
+    --color-danger:       #D64545;
+    --color-danger-light: #FDEAEA;
+    --color-success:      #2E9E5B;
+    --color-success-light:#E6F7ED;
+    --color-neutral-900:  #1A1A1A;
+    --color-neutral-600:  #4B5563;
+    --color-neutral-500:  #6B7280;
+    --color-neutral-300:  #D1D5DB;
+    --color-neutral-100:  #F4F5F7;
+}
+
+/* Money figures - tabular numerals */
+.money {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+/* Status badges */
+.badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold; }
+.badge-success  { @apply bg-success-light text-success; }
+.badge-pending  { @apply bg-neutral-100 text-neutral-600; }
+.badge-warning  { @apply bg-accent-light text-accent; }
+.badge-danger   { @apply bg-danger-light text-danger; }
+
+/* Sidebar nav item */
+.nav-item { @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors; }
+.nav-item:hover { @apply bg-primary-light text-primary; }
+.nav-item.active { @apply bg-primary text-white; }
+
+/* Progress bar */
+.progress-bar {
+    @apply w-full bg-neutral-300 rounded-full h-2.5 overflow-hidden;
+}
+.progress-fill {
+    @apply h-full bg-success rounded-full transition-all duration-500;
+}
+
+/* Form inputs */
+.form-input {
+    @apply w-full px-3 py-2.5 border border-neutral-300 rounded-lg text-sm
+           focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary
+           placeholder:text-neutral-500;
+}
+.form-label { @apply block text-sm font-medium text-neutral-900 mb-1.5; }
+.form-error { @apply text-xs text-danger mt-1; }
+
+/* Buttons */
+.btn {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2;
+}
+.btn-primary {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2;
+    @apply bg-primary text-white hover:bg-primary-dark focus:ring-primary;
+}
+.btn-secondary {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2;
+    @apply bg-white text-neutral-900 border border-neutral-300 hover:bg-neutral-100 focus:ring-neutral-400;
+}
+.btn-danger {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2;
+    @apply bg-danger text-white hover:bg-red-700 focus:ring-danger;
+}
+.btn-sm { @apply px-3 py-1.5 text-xs; }
+
+/* Stat tile */
+.stat-tile {
+    @apply bg-white rounded-xl p-5 border border-neutral-100 shadow-sm;
+}
