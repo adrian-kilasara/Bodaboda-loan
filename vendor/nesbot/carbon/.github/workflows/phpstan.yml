@@ -1,0 +1,52 @@
+name: PHPStan
+
+on: [ pull_request, push ]
+
+jobs:
+  ubuntu:
+    name: PHPStan
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: 8.3
+
+    steps:
+      - name: Checkout the code
+        uses: actions/checkout@v6
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: json, msgpack
+          tools: composer:v2
+          coverage: none
+
+      - name: Get composer cache directory
+        id: composer-cache
+        shell: bash
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache composer dependencies
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: "phpstan-${{ matrix.php }}-${{ matrix.setup }}-${{ matrix.os }}-${{ matrix.phpunit }}-${{ hashFiles('**/composer.json') }}"
+          restore-keys: "phpstan-${{ matrix.php }}-${{ matrix.setup }}-${{ matrix.os }}-${{ matrix.phpunit }}-${{ hashFiles('**/composer.json') }}"
+
+      - name: Install dependencies
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          command:  |
+            composer remove --no-update phpmd/phpmd friendsofphp/php-cs-fixer kylekatarnls/multi-tester --no-interaction --dev;
+            composer require --no-update doctrine/orm symfony/config --no-interaction;
+            composer update --prefer-dist --no-progress --prefer-${{ matrix.setup || 'stable' }};
+
+      - name: Run phpstan
+        run: composer phpstan

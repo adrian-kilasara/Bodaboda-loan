@@ -1,0 +1,2125 @@
+<?php
+
+/*
+ * This file is part of Psy Shell.
+ *
+ * (c) 2012-2026 Justin Hileman
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+namespace Psy\Test;
+
+use Psy\CodeCleaner\NoReturnValue;
+use Psy\Configuration;
+use Psy\Exception\BreakException;
+use Psy\Exception\ErrorException;
+use Psy\Exception\ParseErrorException;
+use Psy\Output\ShellOutput;
+use Psy\Readline\Interactive\Input\History;
+use Psy\Readline\InteractiveReadlineInterface;
+use Psy\Readline\LegacyReadline;
+use Psy\Readline\Readline;
+use Psy\Shell;
+use Psy\ShellAware;
+use Psy\TabCompletion\Matcher\ClassMethodsMatcher;
+use Psy\Test\Fixtures\FakeShell;
+use Symfony\Component\Console\Application;
+use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\StringInput;
+use Symfony\Component\Console\Output\ConsoleOutputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Output\StreamOutput;
+
+class ShellTest extends TestCase
+{
+    private $streams = [];
+    private static ?\ReflectionProperty $streamOutputStreamProperty = null;
+
+    /**
+     * @after
+     */
+    public function closeOpenStreams()
+    {
+        foreach ($this->streams as $stream) {
+            \fclose($stream);
+        }
+    }
+
+    public function testScopeVariables()
+    {
+        $one = 'banana';
+        $two = 123;
+        $three = new \stdClass();
+        $__psysh__ = 'ignore this';
+        $_ = 'ignore this';
+        $_e = 'ignore this';
+
+        $shell = new Shell($this->getConfig());
+        $shell->setScopeVariables(\compact('one', 'two', 'three', '__psysh__', '_', '_e', 'this'));
+
+        $this->assertNotContains('__psysh__', $shell->getScopeVariableNames());
+        $this->assertSame(['one', 'two', 'three', '_'], $shell->getScopeVariableNames());
+        $this->assertSame('banana', $shell->getScopeVariable('one'));
+        $this->assertSame(123, $shell->getScopeVariable('two'));
+        $this->assertSame($three, $shell->getScopeVariable('three'));
+        $this->assertNull($shell->getScopeVariable('_'));
+
+        $diff = $shell->getScopeVariablesDiff(['one' => $one, 'two' => 'not two']);
+        $this->assertSame(['two' => $two, 'three' => $three, '_' => null], $diff);
+
+        $shell->setScopeVariables([]);
+        $this->assertSame(['_'], $shell->getScopeVariableNames());
+
+        $shell->setBoundObject($this);
+        $this->assertSame(['_', 'this'], $shell->getScopeVariableNames());
+        $this->assertSame($this, $shell->getScopeVariable('this'));
+        $this->assertSame(['_' => null], $shell->getScopeVariables(false));
+        $this->assertSame(['_' => null, 'this' => $this], $shell->getScopeVariables());
+    }
+
+    public function testUnknownScopeVariablesThrowExceptions()
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        $shell = new Shell($this->getConfig());
+        $shell->setScopeVariables(['foo' => 'FOO', 'bar' => 1]);
+        $shell->getScopeVariable('baz');
+
+        $this->fail();
+    }
+
+    public function testIncludesWithScopeVariables()
+    {
+        $one = 'banana';
+        $two = 123;
+        $three = new \stdClass();
+        $__psysh__ = 'ignore this';
+        $_ = 'ignore this';
+        $_e = 'ignore this';
+
+        $config = $this->getConfig(['usePcntl' => false]);
+
+        $shell = new Shell($config);
+        $shell->setScopeVariables(\compact('one', 'two', 'three', '__psysh__', '_', '_e', 'this'));
+        $shell->addInput('exit', true);
+
+        // This is super slow and we shouldn't do this :(
+        $shell->run(null, $this->getOutput());
+
+        $this->assertNotContains('__psysh__', $shell->getScopeVariableNames());
+        $this->assertArrayEquals(['one', 'two', 'three', '_'], $shell->getScopeVariableNames());
+        $this->assertSame('banana', $shell->getScopeVariable('one'));
+        $this->assertSame(123, $shell->getScopeVariable('two'));
+        $this->assertSame($three, $shell->getScopeVariable('three'));
+        $this->assertNull($shell->getScopeVariable('_'));
+    }
+
+    protected function assertArrayEquals(array $expected, array $actual, $message = '')
+    {
+        if (\method_exists($this, 'assertSameCanonicalizing')) {
+            return $this->assertSameCanonicalizing($expected, $actual, $message);
+        }
+
+        \sort($expected);
+        \sort($actual);
+
+        $this->assertSame($expected, $actual, $message);
+    }
+
+    /**
+     * Rebind a StreamOutput instance to a test stream.
+     *
+     * @param resource $stream
+     */
+    private function setStreamOutputStream(StreamOutput $output, $stream): void
+    {
+        if (self::$streamOutputStreamProperty === null) {
+            $property = new \ReflectionProperty(StreamOutput::class, 'stream');
+            if (\PHP_VERSION_ID < 80100) {
+                $property->setAccessible(true);
+            }
+            self::$streamOutputStreamProperty = $property;
+        }
+
+        self::$streamOutputStreamProperty->setValue($output, $stream);
+    }
+
+    /**
+     * Create a ShellOutput backed by seekable memory streams.
+     *
+     * @return array{ShellOutput, resource, resource}
+     */
+    private function createTestShellOutput(): array
+    {
+        $stream = \fopen('php://memory', 'w+');
+        $errorStream = \fopen('php://memory', 'w+');
+        $this->streams[] = $stream;
+        $this->streams[] = $errorStream;
+
+        $output = new class($stream, $errorStream) extends ShellOutput {
+            private $mainStream;
+            private StreamOutput $errorOutput;
+
+            public function __construct($mainStream, $errorStream)
+            {
+                $this->mainStream = $mainStream;
+                $this->errorOutput = new StreamOutput($errorStream, StreamOutput::VERBOSITY_NORMAL, false);
+                parent::__construct(StreamOutput::VERBOSITY_NORMAL, false);
+            }
+
+            public function getStream()
+            {
+                return $this->mainStream;
+            }
+
+            public function getErrorOutput(): OutputInterface
+            {
+                return $this->errorOutput;
+            }
+        };
+        $this->setStreamOutputStream($output, $stream);
+        $output->setErrorOutput(new StreamOutput($errorStream, StreamOutput::VERBOSITY_NORMAL, false));
+
+        return [$output, $stream, $errorStream];
+    }
+
+    public function testNonInteractiveDoesNotUpdateContext()
+    {
+        $config = $this->getConfig([
+            'usePcntl'        => false,
+            'interactiveMode' => Configuration::INTERACTIVE_MODE_DISABLED,
+        ]);
+        $shell = new Shell($config);
+
+        $input = $this->getInput('');
+
+        $shell->addInput('$var=5;', true);
+        $shell->addInput('exit', true);
+
+        // This is still super slow and we shouldn't do this :(
+        $shell->run($input, $this->getOutput());
+
+        $this->assertNotContains('var', $shell->getScopeVariableNames());
+    }
+
+    public function testNonInteractiveRawOutput()
+    {
+        $config = $this->getConfig([
+            'usePcntl'        => false,
+            'rawOutput'       => true,
+            'interactiveMode' => Configuration::INTERACTIVE_MODE_DISABLED,
+        ]);
+        $shell = new Shell($config);
+
+        $input = $this->getInput('');
+
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $shell->setOutput($output);
+
+        $shell->addInput('$foo = "bar"', true);
+        $shell->addInput('exit', true);
+
+        // Sigh
+        $shell->run($input, $output);
+
+        \rewind($stream);
+        $streamContents = \stream_get_contents($stream);
+
+        // There shouldn't be a welcome message with raw output
+        $this->assertStringNotContainsString('Justin Hileman', $streamContents);
+        $this->assertStringNotContainsString(\PHP_VERSION, $streamContents);
+        $this->assertStringNotContainsString(Shell::VERSION, $streamContents);
+
+        // There shouldn't be an exit message with non-interactive input
+        $this->assertStringNotContainsString('Goodbye', $streamContents);
+        $this->assertStringNotContainsString('Exiting', $streamContents);
+    }
+
+    public function testIncludes()
+    {
+        $config = $this->getConfig(['configFile' => __DIR__.'/Fixtures/empty.php']);
+
+        $shell = new Shell($config);
+        $this->assertEmpty($shell->getIncludes());
+        $shell->setIncludes(['foo', 'bar', 'baz']);
+        $this->assertSame(['foo', 'bar', 'baz'], $shell->getIncludes());
+    }
+
+    public function testIncludesConfig()
+    {
+        $config = $this->getConfig([
+            'defaultIncludes' => ['/file.php'],
+            'configFile'      => __DIR__.'/Fixtures/empty.php',
+        ]);
+
+        $shell = new Shell($config);
+
+        $includes = $shell->getIncludes();
+        $this->assertSame('/file.php', $includes[0]);
+    }
+
+    public function testAddMatchersViaConfig()
+    {
+        $shell = new FakeShell();
+        $matcher = new ClassMethodsMatcher();
+
+        $config = $this->getConfig([
+            'matchers' => [$matcher],
+        ]);
+        $config->setShell($shell);
+
+        $this->assertSame([$matcher], $shell->matchers);
+    }
+
+    public function testAddMatchersViaConfigAfterShell()
+    {
+        $shell = new FakeShell();
+        $matcher = new ClassMethodsMatcher();
+
+        $config = $this->getConfig([]);
+        $config->setShell($shell);
+        $config->addMatchers([$matcher]);
+
+        $this->assertSame([$matcher], $shell->matchers);
+    }
+
+    public function testReattachingConfigDoesNotReregisterMatchers()
+    {
+        $shell = new FakeShell();
+        $matcher = new ClassMethodsMatcher();
+
+        $config = $this->getConfig([
+            'matchers' => [$matcher],
+        ]);
+
+        $config->setShell($shell);
+        $config->setShell($shell);
+
+        $this->assertSame([$matcher], $shell->matchers);
+    }
+
+    public function testCompletionSourcesViaConfigQueueUntilCompletionEngineInitialization()
+    {
+        $source = new class() implements \Psy\Completion\Source\SourceInterface {
+            public function appliesToKind(int $kinds): bool
+            {
+                return true;
+            }
+
+            public function getCompletions(\Psy\Completion\AnalysisResult $analysis): array
+            {
+                return ['custom'];
+            }
+        };
+
+        $readline = new class() implements InteractiveReadlineInterface, ShellAware {
+            public ?\Psy\Completion\CompletionEngine $completionEngine = null;
+
+            /** @phpstan-ignore-next-line (interface-required constructor params are unused in stub) */
+            public function __construct($historyFile = null, $historySize = 0, $eraseDups = false)
+            {
+            }
+
+            public static function isSupported(): bool
+            {
+                return true;
+            }
+
+            public static function supportsBracketedPaste(): bool
+            {
+                return true;
+            }
+
+            public function addHistory(string $line): bool
+            {
+                return true;
+            }
+
+            public function clearHistory(): bool
+            {
+                return true;
+            }
+
+            public function listHistory(): array
+            {
+                return [];
+            }
+
+            public function readHistory(): bool
+            {
+                return true;
+            }
+
+            public function readline(?string $prompt = null)
+            {
+                return false;
+            }
+
+            public function redisplay()
+            {
+            }
+
+            public function writeHistory(): bool
+            {
+                return true;
+            }
+
+            public function setRequireSemicolons(bool $require): void
+            {
+            }
+
+            public function setTheme(\Psy\Output\Theme $theme): void
+            {
+            }
+
+            public function setUseBracketedPaste(bool $enabled): void
+            {
+            }
+
+            public function setUseSuggestions(bool $enabled): void
+            {
+            }
+
+            public function setUseSyntaxHighlighting(bool $enabled): void
+            {
+            }
+
+            public function setCompletionEngine(\Psy\Completion\CompletionEngine $completionEngine): void
+            {
+                $this->completionEngine = $completionEngine;
+            }
+
+            public function setOutput(OutputInterface $output, ?\Psy\Readline\Interactive\Terminal $terminal = null): void
+            {
+            }
+
+            public function getHistory(): History
+            {
+                return new History();
+            }
+
+            public function setShell(Shell $shell): void
+            {
+            }
+
+            public function setOutputWritten(bool $written): void
+            {
+            }
+        };
+
+        $config = $this->getConfig([
+            'completionSources' => [$source],
+            'useTabCompletion'  => true,
+        ]);
+        $config->setReadline($readline);
+
+        $shell = new Shell($config);
+
+        $pendingProperty = new \ReflectionProperty(Shell::class, 'pendingCompletionSources');
+        if (\PHP_VERSION_ID < 80100) {
+            $pendingProperty->setAccessible(true);
+        }
+        $this->assertSame([$source], $pendingProperty->getValue($shell));
+
+        $shell->boot();
+
+        $method = new \ReflectionMethod(Shell::class, 'initializeCompletionEngine');
+        if (\PHP_VERSION_ID < 80100) {
+            $method->setAccessible(true);
+        }
+        $method->invoke($shell);
+
+        $this->assertNotNull($readline->completionEngine);
+        $this->assertSame([], $pendingProperty->getValue($shell));
+
+        $sourcesProperty = new \ReflectionProperty(\Psy\Completion\CompletionEngine::class, 'sources');
+        if (\PHP_VERSION_ID < 80100) {
+            $sourcesProperty->setAccessible(true);
+        }
+        $sources = $sourcesProperty->getValue($readline->completionEngine);
+        $this->assertTrue(\in_array($source, $sources, true));
+    }
+
+    public function testLegacyReadlineUsesCompletionEngineThroughAutoCompleter()
+    {
+        $readline = new class() implements Readline, ShellAware {
+            /** @phpstan-ignore-next-line (interface-required constructor params are unused in stub) */
+            public function __construct($historyFile = null, $historySize = 0, $eraseDups = false)
+            {
+            }
+
+            public static function isSupported(): bool
+            {
+                return true;
+            }
+
+            public static function supportsBracketedPaste(): bool
+            {
+                return false;
+            }
+
+            public function addHistory(string $line): bool
+            {
+                return true;
+            }
+
+            public function clearHistory(): bool
+            {
+                return true;
+            }
+
+            public function listHistory(): array
+            {
+                return [];
+            }
+
+            public function readHistory(): bool
+            {
+                return true;
+            }
+
+            public function readline(?string $prompt = null)
+            {
+                return false;
+            }
+
+            public function redisplay()
+            {
+            }
+
+            public function writeHistory(): bool
+            {
+                return true;
+            }
+
+            public function setShell(Shell $shell): void
+            {
+            }
+        };
+
+        $config = $this->getConfig([
+            'useTabCompletion' => true,
+        ]);
+        $config->setReadline($readline);
+
+        $shell = new Shell($config);
+        $shell->boot();
+
+        $initializeCompletion = new \ReflectionMethod(Shell::class, 'initializeCompletionEngine');
+        $initializeTabCompletion = new \ReflectionMethod(Shell::class, 'initializeTabCompletion');
+        if (\PHP_VERSION_ID < 80100) {
+            $initializeCompletion->setAccessible(true);
+            $initializeTabCompletion->setAccessible(true);
+        }
+
+        $initializeCompletion->invoke($shell);
+        $initializeTabCompletion->invoke($shell);
+
+        $autoCompleterProperty = new \ReflectionProperty(Shell::class, 'autoCompleter');
+        if (\PHP_VERSION_ID < 80100) {
+            $autoCompleterProperty->setAccessible(true);
+        }
+
+        $completionEngineProperty = new \ReflectionProperty(\Psy\TabCompletion\AutoCompleter::class, 'completionEngine');
+        if (\PHP_VERSION_ID < 80100) {
+            $completionEngineProperty->setAccessible(true);
+        }
+
+        $autoCompleter = $autoCompleterProperty->getValue($shell);
+        $this->assertNotNull($autoCompleter);
+        $this->assertNotNull($completionEngineProperty->getValue($autoCompleter));
+    }
+
+    public function testBootConfiguresInteractiveReadline()
+    {
+        $readline = new class() implements InteractiveReadlineInterface, ShellAware {
+            public bool $shellWasSet = false;
+            public ?bool $requireSemicolons = null;
+            public ?bool $bracketedPaste = null;
+            public ?bool $syntaxHighlighting = null;
+            public ?\Psy\Output\Theme $theme = null;
+            public ?OutputInterface $output = null;
+            public array $calls = [];
+
+            /** @phpstan-ignore-next-line (interface-required constructor params are unused in stub) */
+            public function __construct($historyFile = null, $historySize = 0, $eraseDups = false)
+            {
+            }
+
+            public static function isSupported(): bool
+            {
+                return true;
+            }
+
+            public static function supportsBracketedPaste(): bool
+            {
+                return true;
+            }
+
+            public function addHistory(string $line): bool
+            {
+                return true;
+            }
+
+            public function clearHistory(): bool
+            {
+                return true;
+            }
+
+            public function listHistory(): array
+            {
+                return [];
+            }
+
+            public function readHistory(): bool
+            {
+                return true;
+            }
+
+            public function readline(?string $prompt = null)
+            {
+                return false;
+            }
+
+            public function redisplay()
+            {
+            }
+
+            public function writeHistory(): bool
+            {
+                return true;
+            }
+
+            public function setRequireSemicolons(bool $require): void
+            {
+                $this->calls[] = 'setRequireSemicolons';
+                $this->requireSemicolons = $require;
+            }
+
+            public function setTheme(\Psy\Output\Theme $theme): void
+            {
+                $this->calls[] = 'setTheme';
+                $this->theme = $theme;
+            }
+
+            public function setUseBracketedPaste(bool $enabled): void
+            {
+                $this->calls[] = 'setUseBracketedPaste';
+                $this->bracketedPaste = $enabled;
+            }
+
+            public function setUseSuggestions(bool $enabled): void
+            {
+                $this->calls[] = 'setUseSuggestions';
+            }
+
+            public function setUseSyntaxHighlighting(bool $enabled): void
+            {
+                $this->calls[] = 'setUseSyntaxHighlighting';
+                $this->syntaxHighlighting = $enabled;
+            }
+
+            public function setCompletionEngine(\Psy\Completion\CompletionEngine $completionEngine): void
+            {
+            }
+
+            public function setOutput(OutputInterface $output, ?\Psy\Readline\Interactive\Terminal $terminal = null): void
+            {
+                $this->calls[] = 'setOutput';
+                $this->output = $output;
+            }
+
+            public function getHistory(): History
+            {
+                return new History();
+            }
+
+            public function setShell(Shell $shell): void
+            {
+                $this->calls[] = 'setShell';
+                $this->shellWasSet = true;
+            }
+
+            public function setOutputWritten(bool $written): void
+            {
+            }
+        };
+
+        $config = $this->getConfig([
+            'useBracketedPaste'     => true,
+            'useSyntaxHighlighting' => false,
+            'requireSemicolons'     => true,
+        ]);
+        $config->setReadline($readline);
+
+        $runOutput = $this->getOutput();
+        $shell = new Shell($config);
+        $shell->setOutput($runOutput);
+        $shell->boot();
+
+        $this->assertTrue($readline->shellWasSet);
+        $this->assertSame($config->requireSemicolons(), $readline->requireSemicolons);
+        $this->assertSame($config->useBracketedPaste(), $readline->bracketedPaste);
+        $this->assertSame($config->useSyntaxHighlighting(), $readline->syntaxHighlighting);
+        $this->assertSame($config->theme(), $readline->theme);
+        $this->assertLessThan(
+            \array_search('setTheme', $readline->calls, true),
+            \array_search('setOutput', $readline->calls, true)
+        );
+        $this->assertLessThan(
+            \array_search('setRequireSemicolons', $readline->calls, true),
+            \array_search('setOutput', $readline->calls, true)
+        );
+        $this->assertLessThan(
+            \array_search('setUseSyntaxHighlighting', $readline->calls, true),
+            \array_search('setOutput', $readline->calls, true)
+        );
+    }
+
+    /**
+     * @group isolation-fail
+     */
+    public function testBootWrapsLegacyReadlineInLegacyShim()
+    {
+        $readline = new class() implements Readline {
+            /** @var string|false|null */
+            public $line = 'echo 42';
+
+            /** @phpstan-ignore-next-line (interface-required constructor params are unused in stub) */
+            public function __construct($historyFile = null, $historySize = 0, $eraseDups = false)
+            {
+            }
+
+            public static function isSupported(): bool
+            {
+                return true;
+            }
+
+            public static function supportsBracketedPaste(): bool
+            {
+                return false;
+            }
+
+            public function addHistory(string $line): bool
+            {
+                return true;
+            }
+
+            public function clearHistory(): bool
+            {
+                return true;
+            }
+
+            public function listHistory(): array
+            {
+                return [];
+            }
+
+            public function readHistory(): bool
+            {
+                return true;
+            }
+
+            public function readline(?string $prompt = null)
+            {
+                $line = $this->line;
+                $this->line = false;
+
+                return $line;
+            }
+
+            public function redisplay()
+            {
+            }
+
+            public function writeHistory(): bool
+            {
+                return true;
+            }
+        };
+
+        $config = $this->getConfig();
+        $config->setInteractiveMode(Configuration::INTERACTIVE_MODE_FORCED);
+        $config->setReadline($readline);
+
+        $shell = new Shell($config);
+        $shell->setOutput($this->getOutput());
+        $shell->boot();
+
+        $property = new \ReflectionProperty(Shell::class, 'readline');
+        if (\PHP_VERSION_ID < 80100) {
+            $property->setAccessible(true);
+        }
+        $configuredReadline = $property->getValue($shell);
+
+        $this->assertInstanceOf(LegacyReadline::class, $configuredReadline);
+        $this->assertTrue($shell->has('buffer'));
+
+        $shell->getInput();
+        $this->assertNotNull($shell->flushCode());
+    }
+
+    public function testRenderingExceptions()
+    {
+        $shell = new Shell($this->getConfig());
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $line = __LINE__ + 1;
+        $e = new ParseErrorException('message', 13);
+
+        $shell->setOutput($output);
+        $shell->addCode('code');
+        $this->assertTrue($shell->hasCode());
+        $this->assertNotEmpty($shell->getCodeBuffer());
+
+        $shell->writeException($e);
+
+        $this->assertSame($e, $shell->getScopeVariable('_e'));
+        $this->assertFalse($shell->hasCode());
+        $this->assertEmpty($shell->getCodeBuffer());
+
+        \rewind($stream);
+        $streamContents = \stream_get_contents($stream);
+
+        $expected = 'PARSE ERROR  PHP Parse error: message in test/ShellTest.php on line '.$line.'.';
+        $this->assertSame($expected, \trim($streamContents));
+    }
+
+    public function testFormatExceptionStripsExecutionClosurePathsWithDotsInPath()
+    {
+        $shell = new Shell($this->getConfig(['theme' => 'compact']));
+        $exception = new ErrorException(
+            'Undefined variable: items',
+            0,
+            \E_NOTICE,
+            '/fake/path.to/psysh/src/ExecutionClosure.php(32) : eval()\'d code',
+            2
+        );
+
+        $this->assertSame(
+            '<warning> NOTICE </warning> Undefined variable: items on line 2.',
+            $shell->formatException($exception)
+        );
+    }
+
+    public function testGetInputMarksOutputWrittenForCommandOutput()
+    {
+        $readline = $this->getInteractiveReadline(['cmd', '42']);
+        $config = $this->getConfig();
+        $config->setReadline($readline);
+
+        $shell = new Shell($config);
+        $shell->add(new class() extends Command {
+            public function __construct()
+            {
+                parent::__construct('cmd');
+            }
+
+            protected function execute(InputInterface $input, OutputInterface $output): int
+            {
+                $output->writeln('visible command output');
+
+                return 0;
+            }
+        });
+
+        $shell->setOutput($this->getOutput());
+        $shell->getInput();
+
+        $this->assertSame([true], $readline->outputWrittenCalls);
+    }
+
+    public function testGetInputLeavesOutputWrittenFalseWhenCommandDoesNotWriteOutput()
+    {
+        $readline = $this->getInteractiveReadline(['cmd', '42']);
+        $config = $this->getConfig();
+        $config->setReadline($readline);
+
+        $shell = new Shell($config);
+        $shell->add(new class() extends Command {
+            public function __construct()
+            {
+                parent::__construct('cmd');
+            }
+
+            protected function execute(InputInterface $input, OutputInterface $output): int
+            {
+                return 0;
+            }
+        });
+
+        $shell->setOutput($this->getOutput());
+        $shell->getInput();
+
+        $this->assertSame([false], $readline->outputWrittenCalls);
+    }
+
+    public function testLegacyReadlineAddsSpacerAfterInputBeforeReturnValueInNonCompactMode()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig(['theme' => 'modern']);
+        $config->setReadline($this->getLegacyPhysicalReadline(['1 + 1']));
+
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        $shell->getInput();
+        $this->assertSame('return 1 + 1;', $shell->flushCode());
+
+        $shell->writeReturnValue(2);
+        \rewind($stream);
+
+        $stdout = \preg_replace('/\e\\[[\d;]*m/', '', \stream_get_contents($stream));
+        $this->assertSame("\n= 2\n", $stdout);
+    }
+
+    public function testLegacyReadlineAddsSpacerAroundCommandOutputInNonCompactMode()
+    {
+        [$output, $stream] = $this->createTestShellOutput();
+        $config = $this->getConfig(['theme' => 'modern']);
+        $config->setReadline($this->getLegacyPhysicalReadline(['cmd', '42']));
+
+        $shell = new Shell($config);
+        $shell->add(new class() extends Command {
+            public function __construct()
+            {
+                parent::__construct('cmd');
+            }
+
+            protected function execute(InputInterface $input, OutputInterface $output): int
+            {
+                $output->writeln('visible command output');
+
+                return 0;
+            }
+        });
+
+        $shell->setOutput($output);
+
+        $shell->getInput();
+        $this->assertSame('return 42;', $shell->flushCode());
+        \rewind($stream);
+
+        $this->assertSame("\nvisible command output\n\n\n", \stream_get_contents($stream));
+    }
+
+    public function testLegacyReadlineDoesNotAddExtraSpacerBeforeReturnValueInCompactMode()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig(['theme' => 'compact']);
+        $config->setReadline($this->getLegacyPhysicalReadline(['1 + 1']));
+
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        $shell->getInput();
+        $this->assertSame('return 1 + 1;', $shell->flushCode());
+
+        $shell->writeReturnValue(2);
+        \rewind($stream);
+
+        $stdout = \preg_replace('/\e\\[[\d;]*m/', '', \stream_get_contents($stream));
+        $this->assertSame("= 2\n", $stdout);
+    }
+
+    public function testGetInputMarksOutputWrittenForShellOutputEvenWhenStreamPositionDoesNotAdvance()
+    {
+        $command = new class() extends Command {
+            public function __construct()
+            {
+                parent::__construct('cmd');
+            }
+
+            protected function execute(InputInterface $input, OutputInterface $output): int
+            {
+                $output->writeln('visible command output');
+
+                return 0;
+            }
+        };
+
+        $readline = $this->runShellOutputWriteTest($command);
+
+        $this->assertSame([true], $readline->outputWrittenCalls);
+    }
+
+    public function testGetInputMarksOutputWrittenForShellOutputErrorStreamWrites()
+    {
+        $command = new class() extends Command {
+            public function __construct()
+            {
+                parent::__construct('cmd');
+            }
+
+            protected function execute(InputInterface $input, OutputInterface $output): int
+            {
+                if (!$output instanceof ConsoleOutputInterface) {
+                    throw new \RuntimeException('Expected console output');
+                }
+
+                $output->getErrorOutput()->writeln('visible error output');
+
+                return 0;
+            }
+        };
+
+        $readline = $this->runShellOutputWriteTest($command);
+
+        $this->assertSame([true], $readline->outputWrittenCalls);
+    }
+
+    public function testGetInputIgnoresSuppressedShellOutputWrites()
+    {
+        $command = new class() extends Command {
+            public function __construct()
+            {
+                parent::__construct('cmd');
+            }
+
+            protected function execute(InputInterface $input, OutputInterface $output): int
+            {
+                $output->writeln('hidden command output', OutputInterface::VERBOSITY_VERBOSE);
+
+                return 0;
+            }
+        };
+
+        $readline = $this->runShellOutputWriteTest($command);
+
+        $this->assertSame([false], $readline->outputWrittenCalls);
+    }
+
+    public function testGetInputMarksOutputWrittenForDirectShellOutputStreamWrites()
+    {
+        $command = new class() extends Command {
+            public function __construct()
+            {
+                parent::__construct('cmd');
+            }
+
+            protected function execute(InputInterface $input, OutputInterface $output): int
+            {
+                if (!$output instanceof StreamOutput) {
+                    throw new \RuntimeException('Expected stream output');
+                }
+
+                \fwrite($output->getStream(), 'visible direct stream output');
+
+                return 0;
+            }
+        };
+
+        $readline = $this->runShellOutputWriteTest($command);
+
+        $this->assertSame([true], $readline->outputWrittenCalls);
+    }
+
+    public function testShellOutputTracksVisibleWrites()
+    {
+        [$output] = $this->createTestShellOutput();
+
+        $output->writeln('visible output');
+
+        $this->assertTrue($output->consumeVisibleOutputWritten());
+        $this->assertFalse($output->consumeVisibleOutputWritten());
+    }
+
+    public function testShellOutputWriteListenerIsNoOpForBackwardsCompatibility()
+    {
+        [$output] = $this->createTestShellOutput();
+        $calls = 0;
+
+        $output->setWriteListener(static function () use (&$calls): void {
+            $calls++;
+        });
+
+        $output->writeln('visible output');
+
+        $this->assertSame(0, $calls);
+        $this->assertTrue($output->consumeVisibleOutputWritten());
+    }
+
+    /**
+     * @group isolation-fail
+     */
+    public function testGetInputContinuesReadingAfterInteractiveCommand()
+    {
+        $readline = $this->getInteractiveReadline(['cmd', '42']);
+        $config = $this->getConfig();
+        $config->setReadline($readline);
+
+        $shell = new Shell($config);
+        $shell->add(new class() extends Command {
+            public function __construct()
+            {
+                parent::__construct('cmd');
+            }
+
+            protected function execute(InputInterface $input, OutputInterface $output): int
+            {
+                return 0;
+            }
+        });
+
+        $shell->setOutput($this->getOutput());
+        $shell->getInput();
+
+        $this->assertTrue($shell->hasCode());
+        $this->assertNotNull($shell->flushCode());
+    }
+
+    public function testGetInputReturnsAfterInteractiveCommandQueuesCode()
+    {
+        $readline = $this->getInteractiveReadline(['sudo 1', '2']);
+        $config = $this->getConfig();
+        $config->setReadline($readline);
+
+        $shell = new Shell($config);
+        $shell->setOutput($this->getOutput());
+
+        $shell->getInput();
+        $firstCode = $shell->flushCode();
+
+        $this->assertNotNull($firstCode);
+        $this->assertStringContainsString('1', $firstCode);
+
+        $shell->getInput();
+        $secondCode = $shell->flushCode();
+
+        $this->assertNotNull($secondCode);
+        $this->assertStringContainsString('2', $secondCode);
+    }
+
+    public function testGetInputKeepsThrowUpInsideLegacyContinuationBuffer()
+    {
+        $config = $this->getConfig();
+        $config->setReadline($this->getLegacyPhysicalReadline([
+            'if (true) {',
+            'throw-up "bye"',
+            '}',
+        ]));
+
+        $shell = new Shell($config);
+        $shell->setOutput($this->getOutput());
+        $shell->getInput();
+
+        $code = $shell->flushCode();
+
+        $this->assertNotNull($code);
+        $this->assertStringContainsString('if (true)', $code);
+        $this->assertStringContainsString('ThrowUpException', $code);
+    }
+
+    public function testGetInputDoesNotDispatchQueuedCommandsInsideOpenStrings()
+    {
+        $shell = new Shell($this->getConfig());
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $shell->setOutput($output);
+
+        $shell->addCode('echo "');
+        $shell->addInput('help', true);
+        $shell->getInput();
+
+        $this->assertSame(['echo "', 'help'], $shell->getPendingCodeBuffer());
+        $this->assertNull($shell->flushCode());
+
+        \rewind($stream);
+        $this->assertSame('', \stream_get_contents($stream));
+    }
+
+    /**
+     * @dataProvider notSoBadErrors
+     */
+    public function testReportsErrors($errno, $label)
+    {
+        $shell = new Shell($this->getConfig());
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $shell->setOutput($output);
+
+        $oldLevel = \error_reporting(\E_ALL);
+
+        $shell->handleError($errno, 'wheee', null, 13);
+
+        \error_reporting($oldLevel);
+
+        \rewind($stream);
+        $streamContents = \stream_get_contents($stream);
+
+        $this->assertStringContainsString($label, $streamContents);
+        $this->assertStringContainsString('wheee', $streamContents);
+        $this->assertStringContainsString('line 13', $streamContents);
+    }
+
+    public function notSoBadErrors()
+    {
+        return [
+            [\E_WARNING, 'WARNING'],
+            [\E_NOTICE, 'NOTICE'],
+            [\E_CORE_WARNING, 'CORE WARNING'],
+            [\E_COMPILE_WARNING, 'COMPILE WARNING'],
+            [\E_USER_WARNING, 'USER WARNING'],
+            [\E_USER_NOTICE, 'USER NOTICE'],
+            [\E_DEPRECATED, 'DEPRECATED'],
+            [\E_USER_DEPRECATED, 'USER DEPRECATED'],
+        ];
+    }
+
+    /**
+     * @dataProvider badErrors
+     */
+    public function testThrowsBadErrors($errno)
+    {
+        $this->expectException(ErrorException::class);
+
+        $shell = new Shell($this->getConfig());
+        $shell->handleError($errno, 'wheee', null, 13);
+
+        $this->fail();
+    }
+
+    public function badErrors()
+    {
+        return [
+            [\E_ERROR],
+            [\E_PARSE],
+            [\E_CORE_ERROR],
+            [\E_COMPILE_ERROR],
+            [\E_USER_ERROR],
+            [\E_RECOVERABLE_ERROR],
+        ];
+    }
+
+    public function testVersion()
+    {
+        $shell = new Shell($this->getConfig());
+
+        $this->assertInstanceOf(Application::class, $shell);
+        $this->assertStringContainsString(Shell::VERSION, $shell->getVersion());
+        $this->assertStringContainsString(\PHP_VERSION, $shell->getVersion());
+        $this->assertStringContainsString(\PHP_SAPI, $shell->getVersion());
+    }
+
+    public function testGetVersionHeader()
+    {
+        $header = Shell::getVersionHeader(false);
+
+        $this->assertStringContainsString(Shell::VERSION, $header);
+        $this->assertStringContainsString(\PHP_VERSION, $header);
+        $this->assertStringContainsString(\PHP_SAPI, $header);
+    }
+
+    public function testCodeBuffer()
+    {
+        $shell = new Shell($this->getConfig());
+
+        $shell->addCode('class');
+        $this->assertNull($shell->flushCode());
+        $this->assertTrue($shell->hasCode());
+
+        $shell->addCode('a');
+        $this->assertNull($shell->flushCode());
+        $this->assertTrue($shell->hasCode());
+
+        $shell->addCode('{}');
+        $code = $shell->flushCode();
+        $this->assertFalse($shell->hasCode());
+        $code = \preg_replace('/\s+/', ' ', $code);
+        $this->assertNotNull($code);
+        $this->assertSame('class a { } return new \\Psy\\CodeCleaner\\NoReturnValue();', $code);
+    }
+
+    public function testKeepCodeBufferOpen()
+    {
+        $shell = new Shell($this->getConfig());
+
+        $shell->addCode('1 \\');
+        $this->assertNull($shell->flushCode());
+        $this->assertTrue($shell->hasCode());
+
+        $shell->addCode('+ 1 \\');
+        $this->assertNull($shell->flushCode());
+        $this->assertTrue($shell->hasCode());
+
+        $shell->addCode('+ 1');
+        $code = $shell->flushCode();
+        $this->assertFalse($shell->hasCode());
+        $code = \preg_replace('/\s+/', ' ', $code);
+        $this->assertNotNull($code);
+        $this->assertSame('return 1 + 1 + 1;', $code);
+    }
+
+    public function testCodeBufferThrowsParseExceptions()
+    {
+        $this->expectException(ParseErrorException::class);
+
+        $shell = new Shell($this->getConfig());
+        $shell->addCode('this is not valid');
+        $shell->flushCode();
+
+        $this->fail();
+    }
+
+    public function testClosuresSupport()
+    {
+        $shell = new Shell($this->getConfig());
+        $code = '$test = function () {}';
+        $shell->addCode($code);
+        $shell->flushCode();
+        $code = '$test()';
+        $shell->addCode($code);
+        $this->assertSame($shell->flushCode(), 'return $test();');
+    }
+
+    public function testWriteStdout()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $shell = new Shell($this->getConfig());
+        $shell->setOutput($output);
+
+        $shell->writeStdout("{{stdout}}\n");
+
+        \rewind($stream);
+        $streamContents = \stream_get_contents($stream);
+
+        $this->assertSame('{{stdout}}'.\PHP_EOL, $streamContents);
+    }
+
+    public function testWriteStdoutWithoutNewline()
+    {
+        $this->markTestSkipped('This test won\'t work on CI without overriding pipe detection');
+
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $shell = new Shell($this->getConfig());
+        $shell->setOutput($output);
+
+        $shell->writeStdout('{{stdout}}');
+
+        \rewind($stream);
+        $streamContents = \stream_get_contents($stream);
+
+        $this->assertSame('{{stdout}}<aside>⏎</aside>'.\PHP_EOL, $streamContents);
+    }
+
+    public function testWriteStdoutRawOutputWithoutNewline()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $shell = new Shell($this->getConfig(['rawOutput' => true]));
+        $shell->setOutput($output);
+
+        $shell->writeStdout('{{stdout}}');
+
+        \rewind($stream);
+        $streamContents = \stream_get_contents($stream);
+
+        $this->assertSame('{{stdout}}'.\PHP_EOL, $streamContents);
+    }
+
+    /**
+     * @dataProvider getReturnValues
+     */
+    public function testWriteReturnValue($input, $expected)
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $shell = new Shell($this->getConfig(['theme' => 'modern']));
+        $shell->setOutput($output);
+
+        $shell->writeReturnValue($input);
+        \rewind($stream);
+        $this->assertSame($expected, \stream_get_contents($stream));
+    }
+
+    /**
+     * @dataProvider getReturnValues
+     */
+    public function testDoNotWriteReturnValueWhenQuiet($input, $expected)
+    {
+        $output = $this->getOutput();
+        $output->setVerbosity(StreamOutput::VERBOSITY_QUIET);
+        $stream = $output->getStream();
+        $shell = new Shell($this->getConfig(['theme' => 'modern']));
+        $shell->setOutput($output);
+
+        $shell->writeReturnValue($input);
+        \rewind($stream);
+        $this->assertSame('', \stream_get_contents($stream));
+    }
+
+    public function testWriteReturnValueWithShellOutputDoesNotAddExtraBlankLine()
+    {
+        [$output, $stream] = $this->createTestShellOutput();
+
+        $shell = new Shell($this->getConfig(['theme' => 'modern']));
+        $shell->setOutput($output);
+
+        $shell->writeReturnValue(2);
+        \rewind($stream);
+        $stdout = \preg_replace('/\e\\[[\d;]*m/', '', \stream_get_contents($stream));
+        $this->assertSame("= 2\n", $stdout);
+    }
+
+    public function getReturnValues()
+    {
+        return [
+            ['{{return value}}', "= \033[32m\"\033[39m\033[32m{{return value}}\033[39m\033[32m\"\033[39m".\PHP_EOL],
+            [1, "= \033[35m1\033[39m".\PHP_EOL],
+        ];
+    }
+
+    public function testSemicolonsSuppressReturnSuppressesDisplay()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => true,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        $shell->addCode('$foo = 123;');
+
+        $shell->writeReturnValue(123);
+        \rewind($stream);
+        $this->assertSame('', \stream_get_contents($stream));
+    }
+
+    public function testSemicolonsSuppressReturnCapturesDollarUnderscore()
+    {
+        $output = $this->getOutput();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => true,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        $shell->addCode('$foo = 123;');
+
+        // writeReturnValue still sets $_ even when suppressed
+        $shell->writeReturnValue(123);
+        $this->assertSame(123, $shell->getScopeVariable('_'));
+    }
+
+    public function testSemicolonsSuppressReturnWithoutSemicolon()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => true,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        // No trailing semicolon — should still display
+        $shell->addCode('$foo = 123');
+
+        $shell->writeReturnValue(123);
+        \rewind($stream);
+        $this->assertNotEmpty(\stream_get_contents($stream));
+    }
+
+    public function testSemicolonsSuppressReturnWithTrailingComment()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => true,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        $shell->addCode('$foo = 123; // hush');
+
+        $shell->writeReturnValue(123);
+        \rewind($stream);
+        $this->assertSame('', \stream_get_contents($stream));
+    }
+
+    public function testSemicolonsSuppressReturnDisabledByDefault()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => false,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        // With the feature disabled, semicolons don't suppress
+        $shell->addCode('$foo = 123;');
+
+        $shell->writeReturnValue(123);
+        \rewind($stream);
+        $this->assertNotEmpty(\stream_get_contents($stream));
+    }
+
+    public function testSemicolonsSuppressReturnDoubleModeRequiresDoubleSemicolon()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => Configuration::SEMICOLONS_SUPPRESS_RETURN_DOUBLE,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        $shell->addCode('$foo = 123;');
+
+        $shell->writeReturnValue(123);
+        \rewind($stream);
+        $this->assertNotEmpty(\stream_get_contents($stream));
+    }
+
+    /**
+     * @dataProvider getDoubleSemicolonInputs
+     */
+    public function testSemicolonsSuppressReturnDoubleModeSuppressesDisplay(string $input)
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => Configuration::SEMICOLONS_SUPPRESS_RETURN_DOUBLE,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        $shell->addCode($input);
+
+        $shell->writeReturnValue(123);
+        \rewind($stream);
+        $this->assertSame('', \stream_get_contents($stream));
+    }
+
+    public function testSemicolonsSuppressReturnWithRequireSemicolons()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => true,
+            'requireSemicolons'        => true,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        // Single semicolon is required, should still display
+        $shell->addCode('$foo = 123;');
+
+        $shell->writeReturnValue(123);
+        \rewind($stream);
+        $this->assertNotEmpty(\stream_get_contents($stream));
+    }
+
+    /**
+     * @dataProvider getDoubleSemicolonInputs
+     */
+    public function testSemicolonsSuppressReturnWithDoubleSemicolon(string $input)
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => true,
+            'requireSemicolons'        => true,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        $shell->addCode($input);
+
+        $shell->writeReturnValue(123);
+        \rewind($stream);
+        $this->assertSame('', \stream_get_contents($stream));
+    }
+
+    public function getDoubleSemicolonInputs()
+    {
+        return [
+            'adjacent'        => ['$foo = 123;;'],
+            'space separated' => ['$foo = 123; ;'],
+            'extra spaces'    => ['$foo = 123;   ;'],
+            'tab separated'   => ["\$foo = 123;\t;"],
+            'line comment'    => ['$foo = 123;; // hush'],
+            'hash comment'    => ['$foo = 123;; # hush'],
+        ];
+    }
+
+    public function testSemicolonsSuppressReturnWithControlStructure()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => true,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        // Trailing semicolon after a block — should suppress
+        $shell->addCode('if (true) { 1; };');
+
+        $shell->writeReturnValue(1);
+        \rewind($stream);
+        $this->assertSame('', \stream_get_contents($stream));
+    }
+
+    public function testSemicolonsSuppressReturnResetsAfterUse()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => true,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        // First: suppressed
+        $shell->addCode('$foo = 1;');
+        $shell->writeReturnValue(1);
+        \rewind($stream);
+        $this->assertSame('', \stream_get_contents($stream));
+
+        // Second: not suppressed (no trailing semicolon)
+        \ftruncate($stream, 0);
+        \rewind($stream);
+        $shell->addCode('$bar = 2');
+        $shell->writeReturnValue(2);
+        \rewind($stream);
+        $this->assertNotEmpty(\stream_get_contents($stream));
+    }
+
+    public function testSemicolonsSuppressReturnResetsAfterNoReturnValue()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig([
+            'semicolonsSuppressReturn' => true,
+            'theme'                    => 'modern',
+        ]);
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+
+        $shell->addCode('class A {};');
+        $shell->writeReturnValue(new NoReturnValue());
+        $shell->writeReturnValue(123);
+
+        \rewind($stream);
+        $this->assertNotEmpty(\stream_get_contents($stream));
+    }
+
+    /**
+     * @dataProvider getRenderedExceptions
+     */
+    public function testWriteException($exception, $expected)
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $shell = new Shell($this->getConfig(['theme' => 'compact']));
+        $shell->setOutput($output);
+
+        $shell->writeException($exception);
+        \rewind($stream);
+        $this->assertSame($expected, \stream_get_contents($stream));
+    }
+
+    /**
+     * @dataProvider getRenderedExceptions
+     */
+    public function testWriteExceptionVerbose($exception, $expected)
+    {
+        $output = $this->getOutput();
+        $output->setVerbosity(StreamOutput::VERBOSITY_VERBOSE);
+        $stream = $output->getStream();
+        $shell = new Shell($this->getConfig(['theme' => 'compact']));
+        $shell->setOutput($output);
+
+        $shell->writeException($exception);
+        \rewind($stream);
+        $stdout = \stream_get_contents($stream);
+        $this->assertStringStartsWith($expected, $stdout);
+        $this->assertStringContainsString(\basename(__FILE__), $stdout);
+
+        $lineCount = \count(\explode(\PHP_EOL, $stdout));
+        $this->assertGreaterThan(4, $lineCount); // /shrug
+    }
+
+    public function testCompactVerboseExceptionDoesNotAddTrailingSpacer()
+    {
+        $output = $this->getOutput();
+        $output->setVerbosity(StreamOutput::VERBOSITY_VERBOSE);
+        $stream = $output->getStream();
+        $shell = new Shell($this->getConfig(['theme' => 'compact']));
+        $shell->setOutput($output);
+
+        $shell->writeException(new \Exception('compact trace'));
+        \rewind($stream);
+        $stdout = \stream_get_contents($stream);
+
+        $this->assertNotSame("\n\n", \substr($stdout, -2));
+    }
+
+    public function getRenderedExceptions()
+    {
+        return [[
+            new \Exception('{{message}}'),
+            " Exception  {{message}}.\n",
+        ]];
+    }
+
+    public function testWriteExceptionIncludesConfiguredExceptionDetails()
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $config = $this->getConfig(['theme' => 'compact']);
+        $config->setExceptionDetails(static function (\Throwable $e): ?array {
+            if (!$e instanceof ParseErrorException) {
+                return null;
+            }
+
+            return [
+                'line'  => $e->getStartLine(),
+                'token' => 'T_COALESCE',
+            ];
+        });
+
+        $shell = new Shell($config);
+        $shell->setOutput($output);
+        $shell->writeException(new ParseErrorException('invalid', 7));
+        \rewind($stream);
+        $stdout = \preg_replace('/\e\\[[\d;]*m/', '', \stream_get_contents($stream));
+
+        $this->assertStringStartsWith(' PARSE ERROR  PHP Parse error: invalid in test/ShellTest.php on line ', $stdout);
+        $this->assertStringContainsString("  [\n", $stdout);
+        $this->assertStringContainsString("    \"line\" => 7,\n", $stdout);
+        $this->assertStringContainsString("    \"token\" => \"T_COALESCE\",\n", $stdout);
+        $this->assertStringEndsWith("  ]\n", $stdout);
+    }
+
+    public function testWriteExceptionVerboseButNotReallyBecauseItIsABreakException()
+    {
+        $output = $this->getOutput();
+        $output->setVerbosity(StreamOutput::VERBOSITY_VERBOSE);
+        $stream = $output->getStream();
+        $shell = new Shell($this->getConfig(['theme' => 'compact']));
+        $shell->setOutput($output);
+
+        $shell->writeException(new BreakException('yeah'));
+        \rewind($stream);
+
+        $this->assertSame(" INFO  yeah.\n", \stream_get_contents($stream));
+    }
+
+    /**
+     * @dataProvider getExceptionOutput
+     */
+    public function testCompactExceptionOutput($theme, $exception, $expected)
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $shell = new Shell($this->getConfig(['theme' => $theme]));
+        $shell->setOutput($output);
+
+        $shell->writeException($exception);
+        \rewind($stream);
+
+        $this->assertSame($expected, \stream_get_contents($stream));
+    }
+
+    public function getExceptionOutput()
+    {
+        return [
+            ['compact', new BreakException('break'), " INFO  break.\n"],
+            ['modern', new BreakException('break'), "   INFO  break.\n\n"],
+            ['compact', new \Exception('foo'), " Exception  foo.\n"],
+            ['modern', new \Exception('bar'), "   Exception  bar.\n"],
+        ];
+    }
+
+    /**
+     * @dataProvider getExecuteValues
+     */
+    public function testShellExecute($input, $expected)
+    {
+        $output = $this->getOutput();
+        $stream = $output->getStream();
+        $shell = new Shell($this->getConfig());
+        $shell->setOutput($output);
+        $this->assertSame($expected, $shell->execute($input));
+        \rewind($stream);
+        $this->assertSame('', \stream_get_contents($stream));
+    }
+
+    public function getExecuteValues()
+    {
+        return [
+            ['return 12', 12],
+            ['"{{return value}}"', '{{return value}}'],
+            ['1', 1],
+        ];
+    }
+
+    public function testShellExecuteUsesNonInteractivePromptContext()
+    {
+        $dir = TempPaths::reserve('psysh-test-shell-');
+
+        $options = [
+            'configFile'      => __DIR__.'/Fixtures/empty.php',
+            'interactiveMode' => Configuration::INTERACTIVE_MODE_FORCED,
+            'trustProject'    => Configuration::PROJECT_TRUST_PROMPT,
+            'colorMode'       => Configuration::COLOR_MODE_FORCED,
+            'configDir'       => $dir,
+            'dataDir'         => $dir,
+            'runtimeDir'      => $dir,
+        ];
+
+        $config = new class($options) extends Configuration {
+            public ?bool $lastPromptInputInteractive = null;
+
+            public function loadLocalConfigWithPrompt($input, $output): void
+            {
+                $this->lastPromptInputInteractive = $input->isInteractive();
+            }
+        };
+
+        $shell = new Shell($config);
+        $shell->setOutput($config->getOutput());
+
+        // execute() returns the eval'd value, not an exit code
+        $this->assertSame(2, $shell->execute('1 + 1'));
+        $this->assertFalse($config->lastPromptInputInteractive);
+    }
+
+    public function testShellExecuteDoesNotAppendToLegacyContinuationBuffer()
+    {
+        $config = $this->getConfig(['interactiveMode' => Configuration::INTERACTIVE_MODE_FORCED]);
+        $config->setReadline($this->getLegacyPhysicalReadline([]));
+
+        $shell = new Shell($config);
+        $shell->setOutput($this->getOutput());
+        $shell->boot();
+
+        $property = new \ReflectionProperty(Shell::class, 'readline');
+        if (\PHP_VERSION_ID < 80100) {
+            $property->setAccessible(true);
+        }
+
+        $readline = $property->getValue($shell);
+        $this->assertInstanceOf(LegacyReadline::class, $readline);
+        $readline->append('if (true) {');
+
+        $this->assertSame(2, $shell->execute('1 + 1', true));
+        $this->assertSame(['if (true) {'], $readline->getBuffer());
+        $this->assertFalse($shell->hasCode());
+    }
+
+    /**
+     * @dataProvider commandsToHas
+     */
+    public function testHasCommand($command, $has)
+    {
+        $shell = new Shell($this->getConfig());
+
+        // :-/
+        $refl = new \ReflectionClass(Shell::class);
+        $method = $refl->getMethod('hasCommand');
+        if (\PHP_VERSION_ID < 80100) {
+            $method->setAccessible(true);
+        }
+
+        $this->assertSame($method->invokeArgs($shell, [$command]), $has);
+    }
+
+    public function testPhpCommandCollisionFunctionIgnoresShellOnlySyntax()
+    {
+        $shell = new Shell($this->getConfig());
+
+        $refl = new \ReflectionClass(Shell::class);
+        $boot = $refl->getMethod('boot');
+        $method = $refl->getMethod('getPhpCommandCollisionFunction');
+        if (\PHP_VERSION_ID < 80100) {
+            $boot->setAccessible(true);
+            $method->setAccessible(true);
+        }
+
+        $boot->invoke($shell);
+
+        $this->assertNull($method->invokeArgs($shell, ['help --help']));
+    }
+
+    public function commandsToHas()
+    {
+        return [
+            ['help', true],
+            ['help help', true],
+            ['help ("help")', true],
+            ['"help"', false],
+            ['"help help"', false],
+            ['copy', true],
+            ['copy ($from, $to)', true],
+            ['ls -al ', true],
+            ['ls "-al" ', true],
+            ['ls"-al"', false],
+            [' q', true],
+            ['   q  --help', true],
+            ['"q"', false],
+            ['"q",', false],
+        ];
+    }
+
+    private function getInput($input)
+    {
+        $input = new StringInput($input);
+
+        return $input;
+    }
+
+    private function getLegacyPhysicalReadline(array $inputs): Readline
+    {
+        return new class($inputs) implements Readline {
+            private array $inputs;
+
+            /** @phpstan-ignore-next-line (interface-required constructor params are repurposed in stub) */
+            public function __construct($historyFile = null, $historySize = 0, $eraseDups = false)
+            {
+                $this->inputs = \is_array($historyFile) ? $historyFile : [];
+            }
+
+            public static function isSupported(): bool
+            {
+                return true;
+            }
+
+            public static function supportsBracketedPaste(): bool
+            {
+                return false;
+            }
+
+            public function addHistory(string $line): bool
+            {
+                return true;
+            }
+
+            public function clearHistory(): bool
+            {
+                return true;
+            }
+
+            public function listHistory(): array
+            {
+                return [];
+            }
+
+            public function readHistory(): bool
+            {
+                return true;
+            }
+
+            public function readline(?string $prompt = null)
+            {
+                if ($this->inputs === []) {
+                    return false;
+                }
+
+                return \array_shift($this->inputs);
+            }
+
+            public function redisplay()
+            {
+            }
+
+            public function writeHistory(): bool
+            {
+                return true;
+            }
+        };
+    }
+
+    private function getInteractiveReadline(array $inputs)
+    {
+        return new class($inputs) implements InteractiveReadlineInterface, ShellAware {
+            private array $inputs;
+            public array $outputWrittenCalls = [];
+
+            /** @phpstan-ignore-next-line (interface-required constructor params are repurposed in stub) */
+            public function __construct($historyFile = null, $historySize = 0, $eraseDups = false)
+            {
+                $this->inputs = \is_array($historyFile) ? $historyFile : [];
+            }
+
+            public static function isSupported(): bool
+            {
+                return true;
+            }
+
+            public static function supportsBracketedPaste(): bool
+            {
+                return true;
+            }
+
+            public function addHistory(string $line): bool
+            {
+                return true;
+            }
+
+            public function clearHistory(): bool
+            {
+                return true;
+            }
+
+            public function listHistory(): array
+            {
+                return [];
+            }
+
+            public function readHistory(): bool
+            {
+                return true;
+            }
+
+            public function readline(?string $prompt = null)
+            {
+                if ($this->inputs === []) {
+                    return false;
+                }
+
+                return \array_shift($this->inputs);
+            }
+
+            public function redisplay()
+            {
+            }
+
+            public function writeHistory(): bool
+            {
+                return true;
+            }
+
+            public function setRequireSemicolons(bool $require): void
+            {
+            }
+
+            public function setTheme(\Psy\Output\Theme $theme): void
+            {
+            }
+
+            public function setUseBracketedPaste(bool $enabled): void
+            {
+            }
+
+            public function setUseSuggestions(bool $enabled): void
+            {
+            }
+
+            public function setUseSyntaxHighlighting(bool $enabled): void
+            {
+            }
+
+            public function setCompletionEngine(\Psy\Completion\CompletionEngine $completionEngine): void
+            {
+            }
+
+            public function setOutput(OutputInterface $output, ?\Psy\Readline\Interactive\Terminal $terminal = null): void
+            {
+            }
+
+            public function getHistory(): History
+            {
+                return new History();
+            }
+
+            public function setShell(Shell $shell): void
+            {
+            }
+
+            public function setOutputWritten(bool $written): void
+            {
+                $this->outputWrittenCalls[] = $written;
+            }
+        };
+    }
+
+    private function getOutput()
+    {
+        $stream = \fopen('php://memory', 'w+');
+        $this->streams[] = $stream;
+
+        $output = new StreamOutput($stream, StreamOutput::VERBOSITY_NORMAL, false);
+
+        return $output;
+    }
+
+    /**
+     * Set up a Shell with a ShellOutput backed by seekable streams, run a
+     * command, and return the readline instance for assertion.
+     */
+    private function runShellOutputWriteTest(Command $command)
+    {
+        $readline = $this->getInteractiveReadline(['cmd', '42']);
+        $config = $this->getConfig();
+        $config->setReadline($readline);
+
+        $shell = new Shell($config);
+        $shell->add($command);
+
+        [$output] = $this->createTestShellOutput();
+
+        $shell->setOutput($output);
+        $shell->getInput();
+
+        return $readline;
+    }
+
+    private function getConfig(array $config = [])
+    {
+        // Mebbe there's a better way than this?
+        $dir = TempPaths::reserve('psysh-test-shell-');
+
+        $defaults = [
+            'configDir'    => $dir,
+            'dataDir'      => $dir,
+            'runtimeDir'   => $dir,
+            'colorMode'    => Configuration::COLOR_MODE_FORCED,
+            'trustProject' => false,
+        ];
+
+        return new Configuration(\array_merge($defaults, $config));
+    }
+
+    public function testStrictTypesExecute()
+    {
+        $shell = new Shell($this->getConfig(['strictTypes' => false]));
+        $shell->setOutput($this->getOutput());
+        $shell->execute('(function(): int { return 1.1; })()', true);
+        $this->assertTrue(true);
+    }
+
+    /**
+     * @group php-parser-v4-fail
+     */
+    public function testLaxTypesExecute()
+    {
+        $this->expectException(\TypeError::class);
+
+        $shell = new Shell($this->getConfig(['strictTypes' => true]));
+        $shell->setOutput($this->getOutput());
+        $shell->execute('(function(): int { return 1.1; })()', true);
+    }
+}

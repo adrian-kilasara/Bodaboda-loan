@@ -1,0 +1,69 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+      - '*.x'
+  pull_request:
+  schedule:
+    - cron: '0 0 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+        php: [8.2, 8.3, 8.4, 8.5]
+
+    name: PHP ${{ matrix.php }} - ${{ matrix.os }}
+
+    steps:
+      - name: Set git to use LF
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Checkout skeleton code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+          path: 'skeleton'
+          repository: 'laravel/laravel'
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc # v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: dom, curl, libxml, mbstring, zip, fileinfo
+          ini-values: error_reporting=E_ALL
+          tools: composer:v2
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer install
+
+      - name: Execute lint tests with Laravel preset
+        run: ./pint --test
+
+      - name: Execute lint tests in parallel with Laravel preset
+        run: ./pint --parallel --test
+
+      - name: Execute static analysis
+        run: vendor/bin/phpstan
+        if: matrix.php == '8.4'
+
+      - name: Execute unit/feature tests
+        run: vendor/bin/pest

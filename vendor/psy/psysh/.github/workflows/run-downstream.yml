@@ -1,0 +1,74 @@
+name: Run downstream tests
+
+on:
+  workflow_call:
+    inputs:
+      continue_on_error:
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  downstream:
+    name: ${{ matrix.project }} (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ inputs.continue_on_error && matrix.tier != 1 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: laravel-tinker
+            php: '8.2'
+            tier: 1
+          - project: laravel-web-tinker
+            php: '8.2'
+            tier: 1
+          - project: codeception
+            php: '8.2'
+          - project: magerun2
+            php: '8.2'
+          - project: drush
+            php: '8.3'
+          - project: composer-repl-lib
+            php: '8.1'
+          - project: bdf-prime-shell
+            php: '8.2'
+          - project: mediawiki
+            php: '8.3'
+            extensions: 'curl, dom, intl, json, mbstring, pdo, pdo_sqlite, simplexml, xml, zip'
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6.0.2
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@2.37.1
+        with:
+          php-version: ${{ matrix.php }}
+          tools: composer:v2
+          coverage: none
+          extensions: ${{ matrix.extensions || 'curl, dom, json, mbstring, pdo, pdo_sqlite, simplexml, zip' }}
+
+      - name: Make downstream runner executable
+        run: chmod +x scripts/test-downstream scripts/test-downstream-laravel-tinker-smoke scripts/test-downstream-composer-repl-lib-smoke scripts/test-downstream-mediawiki-smoke
+
+      - name: Run downstream tests
+        run: scripts/test-downstream "${DOWNSTREAM_PROJECT}"
+        timeout-minutes: 15
+        env:
+          DOWNSTREAM_PROJECT: ${{ matrix.project }}
+
+      - name: Run laravel/tinker PTY smoke
+        if: matrix.project == 'laravel-tinker'
+        run: scripts/test-downstream-laravel-tinker-smoke
+        timeout-minutes: 10
+
+      - name: Run ramsey/composer-repl-lib PTY smoke
+        if: matrix.project == 'composer-repl-lib'
+        run: scripts/test-downstream-composer-repl-lib-smoke
+        timeout-minutes: 10
+
+      - name: Run mediawiki PTY smoke
+        if: matrix.project == 'mediawiki'
+        run: scripts/test-downstream-mediawiki-smoke
+        timeout-minutes: 15

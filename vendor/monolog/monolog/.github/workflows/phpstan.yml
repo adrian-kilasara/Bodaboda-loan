@@ -1,0 +1,42 @@
+name: "PHPStan"
+
+on:
+  - push
+  - pull_request
+
+permissions:
+  contents: read
+
+env:
+  COMPOSER_ROOT_VERSION: dev-main
+
+jobs:
+  tests:
+    name: "PHPStan"
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        php-version:
+          - "8.1"
+          - latest
+
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - uses: shivammathur/setup-php@44454db4f0199b8b9685a5d763dc37cbf79108e1 # 2.36.0
+        with:
+          php-version: "${{ matrix.php-version }}"
+          coverage: none
+          extensions: mongodb, redis, amqp
+
+      - name: Add require for mongodb/mongodb to make tests runnable
+        run: "composer require ${{ env.COMPOSER_FLAGS }} mongodb/mongodb --dev --no-update"
+
+      - uses: ramsey/composer-install@3cf229dc2919194e9e36783941438d17239e8520 # 3.1.1
+        with:
+          dependency-versions: highest
+
+      - name: Run PHPStan
+        run: composer phpstan

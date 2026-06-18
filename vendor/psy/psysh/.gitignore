@@ -1,0 +1,14 @@
+__pycache__
+*.pyc
+/.phpunit.result.cache
+/build/psysh/
+/build/stub
+/build/vendor/
+/composer.lock
+/dist/
+/phpstan.neon
+/vendor-bin/*/vendor/
+/vendor-bin/phan/composer.lock
+/vendor-bin/phpstan/composer.lock
+/vendor-bin/phpunit/composer.lock
+/vendor/

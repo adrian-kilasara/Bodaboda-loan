@@ -1,0 +1,177 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 0 * * *'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pest_tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: ['8.2', '8.3', '8.4', '8.5']
+        laravel: ['11.0', '12.0', '13.0']
+        symfony: ['7.4', '8.0']
+        pest: ['3.0.0', '4.0.0']
+        exclude:
+          - laravel: '11.0'
+            symfony: '8.0'
+          - laravel: '12.0'
+            symfony: '8.0'
+          - laravel: '13.0'
+            symfony: '7.4'
+          - php: '8.2'
+            pest: '4.0.0'
+          - php: '8.2'
+            laravel: '13.0'
+          - php: '8.3'
+            laravel: '13.0'
+
+    name: PHP ${{ matrix.php }} - Pest ${{ matrix.pest }} - Laravel ${{ matrix.laravel }} - Symfony ${{ matrix.symfony }}
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          MYSQL_DATABASE: laravel
+        ports:
+          - 3306:3306
+        options:  --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php }}
+        extensions: dom, curl, libxml, mbstring, zip, pdo, sqlite, pdo_sqlite, gd, pdo_mysql, fileinfo, ftp, redis, memcached, gmp
+        tools: composer:v2
+        coverage: xdebug
+
+    - name: Setup Problem Matchers
+      run: |
+        echo "::add-matcher::${{ runner.tool_cache }}/php.json"
+        echo "::add-matcher::${{ runner.tool_cache }}/phpunit.json"
+
+    - name: Get Composer cache directory
+      id: composer-cache
+      run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+    - name: Cache Composer dependencies
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.composer-cache.outputs.dir }}
+        key: ${{ runner.os }}-php-${{ matrix.php }}-composer-${{ hashFiles('**/composer.json') }}
+        restore-keys: |
+          ${{ runner.os }}-php-${{ matrix.php }}-composer-
+
+    - name: Set Collision version
+      run: composer config version "8.x-dev"
+
+    - name: Set Laravel
+      run: composer require laravel/framework:^${{ matrix.laravel }} --dev --no-interaction --no-update
+
+    - name: Set Symfony
+      run: composer require symfony/console:^${{ matrix.symfony }} --no-interaction --no-update
+
+    - name: Set Pest
+      run: composer require pestphp/pest:^${{ matrix.pest }} --dev --no-interaction --no-update
+
+    - name: Install PHP dependencies
+      run: composer update --prefer-stable --no-interaction --prefer-dist --no-progress --ansi
+
+    - name: Run Unit With Pest
+      run: composer test:unit:pest
+
+
+  phpunit_tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: ['8.2', '8.3', '8.4', '8.5']
+        laravel: ['11.0', '12.0', '13.0']
+        symfony: ['7.4', '8.0']
+        phpunit: ['11.0.0', '12.0.0']
+        exclude:
+          - laravel: '11.0'
+            symfony: '8.0'
+          - laravel: '12.0'
+            symfony: '8.0'
+          - laravel: '13.0'
+            symfony: '7.4'
+          - php: '8.2'
+            phpunit: '12.0.0'
+          - php: '8.2'
+            laravel: '13.0'
+          - php: '8.3'
+            laravel: '13.0'
+
+    name: PHP ${{ matrix.php }} - PHPUnit ${{ matrix.phpunit }} - Laravel ${{ matrix.laravel }} - Symfony ${{ matrix.symfony }}
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          MYSQL_DATABASE: laravel
+        ports:
+          - 3306:3306
+        options:  --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php }}
+        extensions: dom, curl, libxml, mbstring, zip, pdo, sqlite, pdo_sqlite, gd, pdo_mysql, fileinfo, ftp, redis, memcached, gmp
+        tools: composer:v2
+        coverage: xdebug
+
+    - name: Setup Problem Matchers
+      run: |
+        echo "::add-matcher::${{ runner.tool_cache }}/php.json"
+        echo "::add-matcher::${{ runner.tool_cache }}/phpunit.json"
+
+    - name: Get Composer cache directory
+      id: composer-cache
+      run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+    - name: Cache Composer dependencies
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.composer-cache.outputs.dir }}
+        key: ${{ runner.os }}-php-${{ matrix.php }}-composer-${{ hashFiles('**/composer.json') }}
+        restore-keys: |
+          ${{ runner.os }}-php-${{ matrix.php }}-composer-
+
+    - name: Set Collision version
+      run: composer config version "8.x-dev"
+
+    - name: Set Laravel
+      run: composer require laravel/framework:^${{ matrix.laravel }} --dev --no-interaction --no-update
+
+    - name: Set Symfony
+      run: composer require symfony/console:^${{ matrix.symfony }} --no-interaction --no-update
+
+    - name: Set PHPUnit
+      run: |
+        composer remove pestphp/pest --dev --no-interaction --no-update
+        composer require phpunit/phpunit:^${{ matrix.phpunit }} --dev --no-interaction --no-update
+
+    - name: Install PHP dependencies
+      run: composer update --prefer-stable --no-interaction --prefer-dist --no-progress --ansi
+
+    - name: Run Unit With PHPUnit
+      run: composer test:unit:phpunit

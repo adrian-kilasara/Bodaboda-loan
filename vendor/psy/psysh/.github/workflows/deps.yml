@@ -1,0 +1,62 @@
+name: Dependency tests
+
+on:
+  schedule:
+    - cron: '1 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  stable:
+    name: Test @stable deps
+    uses: ./.github/workflows/run-tests.yml
+
+  dev:
+    name: Test @dev deps
+    uses: ./.github/workflows/run-tests.yml
+    with:
+      deps: dev
+
+  lowest:
+    name: Test --prefer-lowest deps
+    uses: ./.github/workflows/run-tests-lowest.yml
+
+  downstream:
+    name: Test downstream projects
+    uses: ./.github/workflows/run-downstream.yml
+
+  build:
+    name: Test Phar build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6.0.2
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@2.37.1
+        with:
+          php-version: '7.4'
+          tools: composer:v2
+          coverage: none
+
+      - name: Install dependencies
+        uses: nick-fields/retry@v4.0.0
+        with:
+          timeout_minutes: 5
+          max_attempts: 5
+          command: composer update --no-interaction --no-progress
+
+      - name: Build Phar binaries
+        run: make build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: binaries
+          path: build/*/psysh
+
+      - name: Smoke test
+        run: make smoketest
+
+      - name: PTY smoke test
+        run: test/smoketest-pty.sh build/psysh/psysh
