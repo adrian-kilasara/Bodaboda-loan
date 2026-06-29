@@ -1,59 +1,64 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Bodaboda Pay
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A motorcycle loan management system for the bodaboda (motorcycle-taxi) "work-and-pay" financing model. Built with Laravel 12.
 
-## About Laravel
+Owners lend motorcycles to drivers under an installment contract. Drivers ride and repay in installments until the loan is settled. The system tracks contracts, generates installment schedules, records payments, and allocates them across installments automatically.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## Roles
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- **Admin** — oversees all users and contracts system-wide.
+- **Owner** — manages a motorcycle fleet, creates loan contracts, issues enrolment keys to drivers, records payments.
+- **Driver** — enrols into a contract with a one-time key, tracks their loan balance and payment history.
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Tech Stack
 
-## Learning Laravel
+- Laravel 12 / PHP 8.2
+- MySQL
+- Tailwind CSS v4
+- Alpine.js (CDN, no Livewire)
+- bcmath for all money arithmetic (no floating-point errors on currency)
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+## Setup
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+1. **Create the database** (MySQL must be running — e.g. via XAMPP):
+   ```sql
+   CREATE DATABASE bodaboda CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   ```
 
-## Laravel Sponsors
+2. **Configure environment**:
+   ```bash
+   cp .env.example .env
+   php artisan key:generate
+   ```
+   `.env.example` defaults to `root` with no password (XAMPP default). Adjust `DB_USERNAME` / `DB_PASSWORD` in `.env` if your MySQL setup differs.
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+3. **Migrate and seed demo data**:
+   ```bash
+   php artisan migrate --seed
+   ```
 
-### Premium Partners
+4. **Run**:
+   ```bash
+   php artisan serve
+   ```
+   Visit `http://localhost:8000`.
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+`vendor/` and the compiled frontend (`public/build/`) are already committed, so `composer install` / `npm install` / `npm run build` are not required to run the app. They're only needed if you intend to modify PHP dependencies or frontend assets (`npm run dev` for live CSS/JS reload).
 
-## Contributing
+## Demo Accounts
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+All seeded with password `password`. The login page has a clickable panel that fills these in automatically.
 
-## Code of Conduct
+| Role   | Email                  |
+|--------|-------------------------|
+| Admin  | admin@bodaboda.test    |
+| Owner  | owner@bodaboda.test    |
+| Driver | driver@bodaboda.test   |
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+## Core Domain Flow
 
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+1. Owner adds a motorcycle to their fleet.
+2. Owner creates a loan contract against that motorcycle (principal, markup, installment amount/frequency) — an installment schedule is generated automatically.
+3. Owner generates a one-time enrolment key for the contract.
+4. Driver claims the key to activate the contract and gets visibility into their schedule and balance.
+5. Owner records payments as they come in; each payment is allocated FIFO across outstanding installments, and the contract is marked completed once the balance reaches zero.
