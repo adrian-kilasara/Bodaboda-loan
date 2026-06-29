@@ -3,7 +3,7 @@
 
 @section('content')
 <div class="py-6 space-y-4">
-    <div class="flex items-center justify-between">
+    <div class="flex items-center justify-between animate-slide-up">
         <p class="text-neutral-500 text-sm">{{ $contracts->total() }} contract{{ $contracts->total() !== 1 ? 's' : '' }}</p>
         <a href="{{ route('contracts.create') }}" class="btn-primary">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -14,7 +14,7 @@
     </div>
 
     @if($contracts->isEmpty())
-        <div class="bg-white rounded-xl border border-neutral-100 px-6 py-12 text-center">
+        <div class="empty-state animate-slide-up" style="animation-delay: 60ms">
             <svg class="w-12 h-12 text-neutral-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                       d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
@@ -23,20 +23,20 @@
             <a href="{{ route('contracts.create') }}" class="btn-primary mt-4 inline-flex">Create first contract</a>
         </div>
     @else
-    <div class="bg-white rounded-xl border border-neutral-100 overflow-hidden">
+    <div class="table-shell animate-slide-up" style="animation-delay: 60ms">
         <table class="w-full text-sm">
             <thead>
-                <tr class="border-b border-neutral-100">
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Contract</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Motorcycle</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Driver</th>
-                    <th class="px-4 py-3 text-right text-xs font-semibold text-neutral-500 uppercase">Balance</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Next Due</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Status</th>
-                    <th class="px-4 py-3"></th>
+                <tr>
+                    <th>Contract</th>
+                    <th>Motorcycle</th>
+                    <th>Driver</th>
+                    <th class="text-right">Balance</th>
+                    <th>Next Due</th>
+                    <th>Status</th>
+                    <th></th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-neutral-50">
+            <tbody class="divide-y divide-neutral-100">
                 @foreach($contracts as $contract)
                 @php
                     $statusMap = [
@@ -49,7 +49,7 @@
                     ];
                     $next = $contract->nextDueInstallment();
                 @endphp
-                <tr class="hover:bg-neutral-50">
+                <tr>
                     <td class="px-4 py-3 font-semibold">{{ $contract->contract_number }}</td>
                     <td class="px-4 py-3 text-neutral-600">{{ $contract->motorcycle->registration_number }}</td>
                     <td class="px-4 py-3 text-neutral-600">{{ $contract->driver?->name ?? '—' }}</td>
@@ -71,7 +71,11 @@
                         </span>
                     </td>
                     <td class="px-4 py-3 text-right">
-                        <a href="{{ route('contracts.show', $contract) }}" class="text-primary text-xs hover:underline">View</a>
+                        <a href="{{ route('contracts.show', $contract) }}" class="icon-action" title="View">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                            </svg>
+                        </a>
                     </td>
                 </tr>
                 @endforeach

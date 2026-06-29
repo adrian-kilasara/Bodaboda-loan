@@ -3,7 +3,7 @@
 
 @section('content')
 <div class="py-6 max-w-2xl">
-    <div class="bg-white rounded-xl border border-neutral-100 p-6">
+    <div class="card p-6 animate-slide-up">
         <form method="POST" action="{{ route('motorcycles.update', $motorcycle) }}" class="space-y-5">
             @csrf
             @method('PUT')
@@ -72,7 +72,7 @@
                 <textarea id="notes" name="notes" rows="2" class="form-input">{{ old('notes', $motorcycle->notes) }}</textarea>
             </div>
 
-            <div class="flex gap-3 pt-2">
+            <div class="flex gap-3 pt-4 border-t border-neutral-100">
                 <button type="submit" class="btn-primary">Save Changes</button>
                 <a href="{{ route('motorcycles.show', $motorcycle) }}" class="btn-secondary">Cancel</a>
             </div>

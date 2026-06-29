@@ -4,11 +4,11 @@
 @section('content')
 <div class="px-4 py-5 space-y-4">
 
-    <p class="text-lg font-semibold">Hello, {{ explode(' ', auth()->user()->name)[0] }} 👋</p>
+    <p class="text-lg font-bold animate-slide-up">Hello, {{ explode(' ', auth()->user()->name)[0] }} 👋</p>
 
     @if(!$contract)
         {{-- No contract --}}
-        <div class="bg-white rounded-2xl border border-neutral-100 p-6 text-center">
+        <div class="card p-6 text-center animate-slide-up" style="animation-delay: 60ms">
             <svg class="w-14 h-14 text-neutral-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                       d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
@@ -27,7 +27,7 @@
 
         {{-- Overdue banner --}}
         @if(bccomp((string)$overdue, '0', 2) > 0)
-        <div class="bg-danger-light border border-danger rounded-xl px-4 py-3 flex items-center gap-3">
+        <div class="bg-danger-light border border-danger rounded-xl px-4 py-3 flex items-center gap-3 animate-slide-up" style="animation-delay: 60ms">
             <svg class="w-5 h-5 text-danger flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                 <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
             </svg>
@@ -39,17 +39,17 @@
         @endif
 
         {{-- Balance card --}}
-        <div class="bg-primary rounded-2xl p-5 text-white">
+        <div class="bg-gradient-to-br from-primary to-primary-dark rounded-2xl p-5 text-white shadow-lg shadow-primary/20 animate-slide-up" style="animation-delay: 100ms">
             <p class="text-white/70 text-sm font-medium mb-1">Balance Remaining</p>
-            <p class="text-4xl font-bold money mb-3">TZS {{ number_format($balance) }}</p>
+            <p class="text-4xl font-bold money mb-3" x-data="counter({{ (int) $balance }}, 'TZS ')" x-text="display"></p>
 
-            <div class="mb-3">
+            <div class="mb-3" x-data="{ width: 0 }" x-init="setTimeout(() => width = {{ $percent }}, 150)">
                 <div class="flex justify-between text-xs text-white/70 mb-1.5">
                     <span>{{ $percent }}% paid</span>
                     <span>TZS {{ number_format($contract->financed_amount) }} total</span>
                 </div>
-                <div class="w-full bg-white/20 rounded-full h-2.5">
-                    <div class="h-full bg-white rounded-full transition-all" style="width: {{ $percent }}%"></div>
+                <div class="w-full bg-white/20 rounded-full h-2.5 overflow-hidden">
+                    <div class="h-full bg-white rounded-full transition-all duration-1000 ease-out" :style="`width: ${width}%`"></div>
                 </div>
             </div>
 
@@ -63,10 +63,10 @@
         </div>
 
         {{-- Loan info --}}
-        <div class="bg-white rounded-2xl border border-neutral-100 p-4">
+        <div class="card p-4 animate-slide-up" style="animation-delay: 140ms">
             <div class="flex items-center justify-between mb-3">
                 <h3 class="font-semibold text-sm">Loan Details</h3>
-                <span class="badge {{ $contract->status === 'completed' ? 'badge-success' : 'badge-success' }}">
+                <span class="badge badge-success">
                     {{ str_replace('_', ' ', $contract->status) }}
                 </span>
             </div>
@@ -91,15 +91,15 @@
         </div>
 
         {{-- Recent payments --}}
-        <div class="bg-white rounded-2xl border border-neutral-100 p-4">
+        <div class="card p-4 animate-slide-up" style="animation-delay: 180ms">
             <h3 class="font-semibold text-sm mb-3">Recent Payments</h3>
             @php $recentPays = $contract->payments->take(5); @endphp
             @if($recentPays->isEmpty())
                 <p class="text-neutral-400 text-sm">No payments yet.</p>
             @else
-                <div class="space-y-2">
+                <div class="space-y-1">
                     @foreach($recentPays as $pay)
-                    <div class="flex items-center justify-between py-1.5">
+                    <div class="flex items-center justify-between py-2 {{ !$loop->last ? 'border-b border-neutral-100' : '' }}">
                         <div>
                             <p class="text-sm font-medium">TZS {{ number_format($pay->amount) }}</p>
                             <p class="text-xs text-neutral-400">{{ $pay->channelLabel() }} · {{ $pay->payment_date->format('d M Y') }}</p>
@@ -113,7 +113,7 @@
             @endif
         </div>
 
-        <a href="{{ route('driver.enrol') }}" class="btn-secondary w-full justify-center">View Full Schedule</a>
+        <a href="{{ route('driver.enrol') }}" class="btn-secondary w-full justify-center animate-slide-up" style="animation-delay: 220ms">View Full Schedule</a>
     @endif
 </div>
 @endsection

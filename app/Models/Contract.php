@@ -77,6 +77,7 @@ class Contract extends Model
     public function overdueAmount(): string
     {
         return $this->installments()
+            ->reorder()
             ->whereIn('status', ['pending', 'partial', 'overdue'])
             ->where('due_date', '<', now()->toDateString())
             ->selectRaw('SUM(amount_due - amount_paid) as total')

@@ -4,7 +4,7 @@
 @section('content')
 <div class="py-6 space-y-4">
     {{-- Filters --}}
-    <form method="GET" action="{{ route('admin.users.index') }}" class="flex flex-wrap gap-3 items-end">
+    <form method="GET" action="{{ route('admin.users.index') }}" class="card p-4 flex flex-wrap gap-3 items-end animate-slide-up">
         <div>
             <label class="form-label">Role</label>
             <select name="role" class="form-input w-36">
@@ -28,30 +28,30 @@
                    class="form-input" placeholder="Name or email…">
         </div>
         <button type="submit" class="btn-primary">Filter</button>
-        <a href="{{ route('admin.users.index') }}" class="btn-secondary">Clear</a>
+        <a href="{{ route('admin.users.index') }}" class="btn-ghost">Clear</a>
     </form>
 
-    <div class="bg-white rounded-xl border border-neutral-100 overflow-hidden">
+    <div class="table-shell animate-slide-up" style="animation-delay: 60ms">
         <table class="w-full text-sm">
             <thead>
-                <tr class="border-b border-neutral-100">
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Name</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Email</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Phone</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Role</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Status</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Joined</th>
-                    <th class="px-4 py-3"></th>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Joined</th>
+                    <th></th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-neutral-50">
+            <tbody class="divide-y divide-neutral-100">
                 @foreach($users as $u)
-                <tr class="hover:bg-neutral-50">
+                <tr>
                     <td class="px-4 py-3 font-medium">{{ $u->name }}</td>
                     <td class="px-4 py-3 text-neutral-600 text-xs">{{ $u->email }}</td>
                     <td class="px-4 py-3 text-neutral-600 text-xs">{{ $u->phone }}</td>
                     <td class="px-4 py-3">
-                        <span class="badge {{ $u->role==='admin' ? 'bg-purple-100 text-purple-700' : ($u->role==='owner' ? 'badge-warning' : 'badge-pending') }}">
+                        <span class="badge {{ $u->role==='admin' ? 'badge-info' : ($u->role==='owner' ? 'badge-warning' : 'badge-pending') }}">
                             {{ $u->role }}
                         </span>
                     </td>
@@ -59,12 +59,12 @@
                         <span class="badge {{ $u->status==='active' ? 'badge-success' : 'badge-danger' }}">{{ $u->status }}</span>
                     </td>
                     <td class="px-4 py-3 text-xs text-neutral-400">{{ $u->created_at->format('d M Y') }}</td>
-                    <td class="px-4 py-3">
+                    <td class="px-4 py-3 text-right">
                         @if($u->role !== 'admin')
                         <form method="POST" action="{{ route('admin.users.toggleStatus', $u) }}">
                             @csrf @method('PUT')
                             <button type="submit"
-                                    class="text-xs {{ $u->status==='active' ? 'text-danger' : 'text-success' }} hover:underline">
+                                    class="text-xs font-medium {{ $u->status==='active' ? 'text-danger' : 'text-success' }} hover:underline">
                                 {{ $u->status==='active' ? 'Suspend' : 'Activate' }}
                             </button>
                         </form>

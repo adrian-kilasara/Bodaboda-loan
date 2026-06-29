@@ -3,7 +3,7 @@
 
 @section('content')
 <div class="py-6 max-w-2xl">
-    <div class="bg-white rounded-xl border border-neutral-100 p-6">
+    <div class="card p-6 animate-slide-up">
         <form method="POST" action="{{ route('contacts.store') }}" class="space-y-5">
             @csrf
 
@@ -84,9 +84,9 @@
                 <textarea id="notes" name="notes" rows="2" class="form-input">{{ old('notes') }}</textarea>
             </div>
 
-            <div class="flex gap-3">
-                <button type="submit" class="btn-primary">Save Contact</button>
-                <a href="{{ route('contacts.index') }}" class="btn-secondary">Cancel</a>
+            <div class="flex gap-3 pt-2 border-t border-neutral-100">
+                <button type="submit" class="btn-primary mt-4">Save Contact</button>
+                <a href="{{ route('contacts.index') }}" class="btn-secondary mt-4">Cancel</a>
             </div>
         </form>
     </div>

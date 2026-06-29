@@ -3,7 +3,7 @@
 @section('subtitle', $contract->motorcycle->registration_number . ' — ' . $contract->motorcycle->make . ' ' . $contract->motorcycle->model)
 
 @section('content')
-<div class="py-6 space-y-5">
+<div class="py-6 space-y-5" x-data="{ paymentModal: {{ $errors->any() ? 'true' : 'false' }} }">
 @php
     $statusMap = [
         'active'            => 'badge-success',
@@ -21,7 +21,7 @@
 @endphp
 
 {{-- Summary bar --}}
-<div class="bg-white rounded-xl border border-neutral-100 p-5">
+<div class="card p-5 animate-slide-up">
     <div class="flex items-start justify-between mb-4">
         <div>
             <h2 class="font-bold text-lg">{{ $contract->contract_number }}</h2>
@@ -31,7 +31,7 @@
                 Started {{ $contract->start_date->format('d M Y') }}
             </p>
         </div>
-        <span class="badge {{ $statusMap[$contract->status] ?? 'badge-pending' }} text-sm px-3 py-1">
+        <span class="badge {{ $statusMap[$contract->status] ?? 'badge-pending' }} text-sm px-3 py-1.5">
             {{ str_replace('_', ' ', $contract->status) }}
         </span>
     </div>
@@ -43,7 +43,7 @@
         </div>
         <div>
             <p class="text-xs text-neutral-500 font-medium">Amount Paid</p>
-            <p class="font-bold money text-lg text-success">TZS {{ number_format($paid) }}</p>
+            <p class="font-bold money text-lg text-success" x-data="counter({{ (int) $paid }}, 'TZS ')" x-text="display"></p>
         </div>
         <div>
             <p class="text-xs text-neutral-500 font-medium">Balance</p>
@@ -58,31 +58,33 @@
     </div>
 
     {{-- Progress bar --}}
-    <div class="mb-3">
+    <div class="mb-3" x-data="{ width: 0 }" x-init="setTimeout(() => width = {{ $percent }}, 150)">
         <div class="flex justify-between text-xs text-neutral-500 mb-1">
             <span>Progress</span>
             <span>{{ $percent }}% paid</span>
         </div>
         <div class="progress-bar">
-            <div class="progress-fill" style="width: {{ $percent }}%"></div>
+            <div class="progress-fill" :style="`width: ${width}%`"></div>
         </div>
     </div>
 
     @if($next)
-    <div class="text-sm {{ $next->isOverdue() ? 'text-danger' : 'text-neutral-600' }}">
+    <div class="text-sm {{ $next->isOverdue() ? 'text-danger' : 'text-neutral-600' }} flex items-center gap-1.5">
         Next due:
         <span class="font-semibold">TZS {{ number_format($next->amount_due) }}</span>
         on {{ $next->due_date->format('D, d M Y') }}
-        @if($next->isOverdue()) &nbsp;<span class="badge badge-danger">OVERDUE</span> @endif
+        @if($next->isOverdue()) <span class="badge badge-danger">OVERDUE</span> @endif
     </div>
     @endif
 </div>
 
 {{-- Action buttons --}}
-<div class="flex flex-wrap gap-3">
+<div class="flex flex-wrap gap-3 animate-slide-up" style="animation-delay: 60ms">
     @if(in_array($contract->status, ['active', 'defaulted']))
-    <button onclick="document.getElementById('paymentModal').classList.remove('hidden')"
-            class="btn-primary">
+    <button @click="paymentModal = true" class="btn-primary">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
         Record Payment
     </button>
     @endif
@@ -101,7 +103,7 @@
 </div>
 
 {{-- Loan terms --}}
-<div class="bg-white rounded-xl border border-neutral-100 p-5">
+<div class="card p-5 animate-slide-up" style="animation-delay: 100ms">
     <h3 class="font-semibold text-sm uppercase text-neutral-500 tracking-wide mb-3">Loan Terms</h3>
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
         @foreach([
@@ -123,23 +125,23 @@
 </div>
 
 {{-- Installment schedule --}}
-<div class="bg-white rounded-xl border border-neutral-100 overflow-hidden">
-    <div class="px-5 py-3 border-b border-neutral-100 flex items-center justify-between">
+<div class="table-shell animate-slide-up" style="animation-delay: 140ms">
+    <div class="px-5 py-3 border-b border-neutral-200 flex items-center justify-between">
         <h3 class="font-semibold text-sm">Installment Schedule</h3>
         <span class="text-xs text-neutral-500">{{ $contract->installments->count() }} installments</span>
     </div>
-    <div class="overflow-x-auto">
+    <div class="overflow-x-auto max-h-96 overflow-y-auto">
         <table class="w-full text-sm">
-            <thead>
-                <tr class="border-b border-neutral-50">
-                    <th class="px-4 py-2 text-left text-xs text-neutral-500">#</th>
-                    <th class="px-4 py-2 text-left text-xs text-neutral-500">Due Date</th>
-                    <th class="px-4 py-2 text-right text-xs text-neutral-500">Due</th>
-                    <th class="px-4 py-2 text-right text-xs text-neutral-500">Paid</th>
-                    <th class="px-4 py-2 text-left text-xs text-neutral-500">Status</th>
+            <thead class="sticky top-0">
+                <tr>
+                    <th>#</th>
+                    <th>Due Date</th>
+                    <th class="text-right">Due</th>
+                    <th class="text-right">Paid</th>
+                    <th>Status</th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-neutral-50">
+            <tbody class="divide-y divide-neutral-100">
                 @foreach($contract->installments as $inst)
                 @php
                     $iMap = [
@@ -150,7 +152,7 @@
                         'waived'  => 'badge-pending',
                     ];
                 @endphp
-                <tr class="{{ $inst->status === 'overdue' ? 'bg-danger-light/40' : 'hover:bg-neutral-50' }}">
+                <tr class="{{ $inst->status === 'overdue' ? 'bg-danger-light/40' : '' }}">
                     <td class="px-4 py-2 text-neutral-400 text-xs">{{ $inst->installment_number }}</td>
                     <td class="px-4 py-2 text-xs">{{ $inst->due_date->format('d M Y') }}</td>
                     <td class="px-4 py-2 text-right text-xs money">TZS {{ number_format($inst->amount_due) }}</td>
@@ -168,8 +170,8 @@
 </div>
 
 {{-- Payment history --}}
-<div class="bg-white rounded-xl border border-neutral-100 overflow-hidden">
-    <div class="px-5 py-3 border-b border-neutral-100">
+<div class="table-shell animate-slide-up" style="animation-delay: 180ms">
+    <div class="px-5 py-3 border-b border-neutral-200">
         <h3 class="font-semibold text-sm">Payment History</h3>
     </div>
     @if($contract->payments->isEmpty())
@@ -178,18 +180,18 @@
     <div class="overflow-x-auto">
         <table class="w-full text-sm">
             <thead>
-                <tr class="border-b border-neutral-50">
-                    <th class="px-4 py-2 text-left text-xs text-neutral-500">Date</th>
-                    <th class="px-4 py-2 text-right text-xs text-neutral-500">Amount</th>
-                    <th class="px-4 py-2 text-left text-xs text-neutral-500">Channel</th>
-                    <th class="px-4 py-2 text-left text-xs text-neutral-500">Reference</th>
-                    <th class="px-4 py-2 text-left text-xs text-neutral-500">Recorded By</th>
-                    <th class="px-4 py-2 text-left text-xs text-neutral-500">Status</th>
+                <tr>
+                    <th>Date</th>
+                    <th class="text-right">Amount</th>
+                    <th>Channel</th>
+                    <th>Reference</th>
+                    <th>Recorded By</th>
+                    <th>Status</th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-neutral-50">
+            <tbody class="divide-y divide-neutral-100">
                 @foreach($contract->payments as $pay)
-                <tr class="hover:bg-neutral-50">
+                <tr>
                     <td class="px-4 py-2 text-xs">{{ $pay->payment_date->format('d M Y') }}</td>
                     <td class="px-4 py-2 text-right text-xs money font-semibold text-success">TZS {{ number_format($pay->amount) }}</td>
                     <td class="px-4 py-2 text-xs">{{ $pay->channelLabel() }}</td>
@@ -208,15 +210,24 @@
     @endif
 </div>
 
-</div>
-
-{{-- Record Payment Modal --}}
-<div id="paymentModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-    <div class="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
+{{-- Record Payment Modal (shares paymentModal state with the outer x-data) --}}
+<template x-teleport="body">
+<div x-show="paymentModal" x-cloak class="dialog-overlay flex items-center justify-center p-4"
+     x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+     @keydown.escape.window="paymentModal = false">
+    <div class="dialog-panel w-full max-w-md p-6"
+         @click.outside="paymentModal = false"
+         x-show="paymentModal"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0 scale-95"
+         x-transition:enter-end="opacity-100 scale-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100 scale-100"
+         x-transition:leave-end="opacity-0 scale-95">
         <div class="flex items-center justify-between mb-5">
-            <h3 class="text-lg font-semibold">Record Payment</h3>
-            <button onclick="document.getElementById('paymentModal').classList.add('hidden')"
-                    class="text-neutral-400 hover:text-neutral-900">
+            <h3 class="text-lg font-bold">Record Payment</h3>
+            <button @click="paymentModal = false" class="icon-action">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                 </svg>
@@ -253,15 +264,12 @@
             </div>
             <div class="flex gap-3 pt-1">
                 <button type="submit" class="btn-primary flex-1 justify-center">Record Payment</button>
-                <button type="button" onclick="document.getElementById('paymentModal').classList.add('hidden')"
-                        class="btn-secondary">Cancel</button>
+                <button type="button" @click="paymentModal = false" class="btn-secondary">Cancel</button>
             </div>
         </form>
     </div>
 </div>
+</template>
 
-{{-- Show modal if validation failed on payment --}}
-@if($errors->any())
-<script>document.getElementById('paymentModal').classList.remove('hidden');</script>
-@endif
+</div>
 @endsection

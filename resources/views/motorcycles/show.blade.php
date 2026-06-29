@@ -4,7 +4,7 @@
 
 @section('content')
 <div class="py-6 space-y-5">
-    <div class="flex gap-3">
+    <div class="flex gap-3 animate-slide-up">
         <a href="{{ route('motorcycles.edit', $motorcycle) }}" class="btn-secondary btn-sm">Edit</a>
         @if($motorcycle->contracts->where('status', 'active')->isEmpty() && auth()->user()->isOwner())
         <form method="POST" action="{{ route('motorcycles.destroy', $motorcycle) }}"
@@ -22,7 +22,7 @@
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {{-- Details --}}
-        <div class="lg:col-span-1 bg-white rounded-xl border border-neutral-100 p-5 space-y-4">
+        <div class="lg:col-span-1 card p-5 space-y-4 animate-slide-up" style="animation-delay: 60ms">
             <h2 class="font-semibold text-sm uppercase text-neutral-500 tracking-wide">Asset Details</h2>
             @php
                 $statusMap = [
@@ -50,7 +50,7 @@
                 'Purchase Price'  => 'TZS ' . number_format($motorcycle->purchase_price),
                 'Purchase Date'   => $motorcycle->purchase_date?->format('d M Y') ?? '—',
             ] as $label => $value)
-            <div class="flex items-center justify-between border-t border-neutral-50 pt-3">
+            <div class="flex items-center justify-between border-t border-neutral-100 pt-3">
                 <span class="text-neutral-500 text-sm">{{ $label }}</span>
                 <span class="text-sm font-medium">{{ $value }}</span>
             </div>
@@ -58,18 +58,19 @@
         </div>
 
         {{-- Contract history --}}
-        <div class="lg:col-span-2 bg-white rounded-xl border border-neutral-100 p-5">
+        <div class="lg:col-span-2 card p-5 animate-slide-up" style="animation-delay: 100ms">
             <h2 class="font-semibold text-sm uppercase text-neutral-500 tracking-wide mb-4">Loan Contract History</h2>
             @if($motorcycle->contracts->isEmpty())
                 <p class="text-neutral-400 text-sm">No contracts yet.</p>
             @else
                 <div class="space-y-3">
                     @foreach($motorcycle->contracts as $contract)
-                    <div class="border border-neutral-100 rounded-lg p-4">
+                    <a href="{{ route('contracts.show', $contract) }}"
+                       class="block border border-neutral-200 rounded-lg p-4 transition-all duration-150 hover:border-primary/30 hover:shadow-sm">
                         <div class="flex items-center justify-between mb-2">
-                            <a href="{{ route('contracts.show', $contract) }}" class="font-semibold text-primary hover:underline text-sm">
+                            <span class="font-semibold text-primary text-sm">
                                 {{ $contract->contract_number }}
-                            </a>
+                            </span>
                             @php
                                 $cMap = [
                                     'active'            => 'badge-success',
@@ -98,7 +99,7 @@
                                 <p class="font-medium">{{ $contract->start_date->format('d M Y') }}</p>
                             </div>
                         </div>
-                    </div>
+                    </a>
                     @endforeach
                 </div>
             @endif

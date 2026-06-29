@@ -3,8 +3,8 @@
 
 @section('content')
 <div class="px-4 py-5 space-y-4">
-    <div class="flex items-center gap-4">
-        <div class="w-14 h-14 bg-primary rounded-full flex items-center justify-center text-white text-xl font-bold">
+    <div class="flex items-center gap-4 animate-slide-up">
+        <div class="w-14 h-14 bg-gradient-to-br from-primary to-primary-dark rounded-full flex items-center justify-center text-white text-xl font-bold shadow-md shadow-primary/20">
             {{ strtoupper(substr(auth()->user()->name, 0, 1)) }}
         </div>
         <div>
@@ -13,7 +13,7 @@
         </div>
     </div>
 
-    <div class="bg-white rounded-2xl border border-neutral-100 p-5">
+    <div class="card p-5 animate-slide-up" style="animation-delay: 60ms">
         <h2 class="font-semibold text-sm mb-4">Edit Profile</h2>
         <form method="POST" action="{{ route('driver.profile.update') }}" class="space-y-4">
             @csrf @method('PUT')
@@ -50,13 +50,21 @@
         </form>
     </div>
 
-    <div class="bg-white rounded-2xl border border-neutral-100 p-5">
-        <p class="text-sm text-neutral-600">
-            <span class="font-medium">Email:</span> {{ $user->email }}<br>
-            <span class="font-medium">Role:</span> {{ ucfirst($user->role) }}<br>
-            <span class="font-medium">Account Status:</span>
-            <span class="{{ $user->status === 'active' ? 'text-success' : 'text-danger' }} font-medium capitalize">{{ $user->status }}</span>
-        </p>
+    <div class="card p-5 animate-slide-up" style="animation-delay: 100ms">
+        <div class="space-y-2.5 text-sm">
+            <div class="flex justify-between">
+                <span class="text-neutral-400">Email</span>
+                <span class="font-medium">{{ $user->email }}</span>
+            </div>
+            <div class="flex justify-between border-t border-neutral-100 pt-2.5">
+                <span class="text-neutral-400">Role</span>
+                <span class="font-medium">{{ ucfirst($user->role) }}</span>
+            </div>
+            <div class="flex justify-between border-t border-neutral-100 pt-2.5">
+                <span class="text-neutral-400">Account Status</span>
+                <span class="badge {{ $user->status === 'active' ? 'badge-success' : 'badge-danger' }}">{{ $user->status }}</span>
+            </div>
+        </div>
     </div>
 </div>
 @endsection

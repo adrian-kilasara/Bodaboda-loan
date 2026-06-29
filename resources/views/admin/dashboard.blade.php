@@ -7,72 +7,72 @@
 
     {{-- System stats --}}
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div class="stat-tile">
+        <div class="stat-tile animate-slide-up" style="animation-delay: 0ms">
             <p class="text-xs text-neutral-500 font-medium uppercase tracking-wide">Owners</p>
-            <p class="text-3xl font-bold money mt-1">{{ $stats['total_owners'] }}</p>
+            <p class="text-3xl font-bold money mt-1" x-data="counter({{ $stats['total_owners'] }})" x-text="display"></p>
         </div>
-        <div class="stat-tile">
+        <div class="stat-tile animate-slide-up" style="animation-delay: 40ms">
             <p class="text-xs text-neutral-500 font-medium uppercase tracking-wide">Drivers</p>
-            <p class="text-3xl font-bold money mt-1">{{ $stats['total_drivers'] }}</p>
+            <p class="text-3xl font-bold money mt-1" x-data="counter({{ $stats['total_drivers'] }})" x-text="display"></p>
         </div>
-        <div class="stat-tile">
+        <div class="stat-tile animate-slide-up" style="animation-delay: 80ms">
             <p class="text-xs text-neutral-500 font-medium uppercase tracking-wide">Motorcycles</p>
-            <p class="text-3xl font-bold money mt-1">{{ $stats['total_motorcycles'] }}</p>
+            <p class="text-3xl font-bold money mt-1" x-data="counter({{ $stats['total_motorcycles'] }})" x-text="display"></p>
         </div>
-        <div class="stat-tile">
+        <div class="stat-tile animate-slide-up" style="animation-delay: 120ms">
             <p class="text-xs text-neutral-500 font-medium uppercase tracking-wide">Active Contracts</p>
-            <p class="text-3xl font-bold money mt-1 text-success">{{ $stats['active_contracts'] }}</p>
+            <p class="text-3xl font-bold money mt-1 text-success" x-data="counter({{ $stats['active_contracts'] }})" x-text="display"></p>
         </div>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div class="stat-tile">
+        <div class="stat-tile animate-slide-up" style="animation-delay: 160ms">
             <p class="text-xs text-neutral-500 font-medium uppercase tracking-wide">Total Disbursed</p>
-            <p class="text-2xl font-bold money mt-1">TZS {{ number_format($stats['total_disbursed']) }}</p>
+            <p class="text-2xl font-bold money mt-1" x-data="counter({{ (int) $stats['total_disbursed'] }}, 'TZS ')" x-text="display"></p>
         </div>
-        <div class="stat-tile">
+        <div class="stat-tile animate-slide-up" style="animation-delay: 200ms">
             <p class="text-xs text-neutral-500 font-medium uppercase tracking-wide">Total Collected</p>
-            <p class="text-2xl font-bold money mt-1 text-success">TZS {{ number_format($stats['total_collected']) }}</p>
+            <p class="text-2xl font-bold money mt-1 text-success" x-data="counter({{ (int) $stats['total_collected'] }}, 'TZS ')" x-text="display"></p>
         </div>
-        <div class="stat-tile">
+        <div class="stat-tile animate-slide-up" style="animation-delay: 240ms">
             <p class="text-xs text-neutral-500 font-medium uppercase tracking-wide">Outstanding</p>
-            <p class="text-2xl font-bold money mt-1">TZS {{ number_format($stats['total_outstanding']) }}</p>
+            <p class="text-2xl font-bold money mt-1" x-data="counter({{ (int) $stats['total_outstanding'] }}, 'TZS ')" x-text="display"></p>
         </div>
     </div>
 
     @if($stats['defaulted'] > 0)
-    <div class="bg-danger-light border border-danger rounded-xl px-5 py-3 flex items-center justify-between">
+    <div class="bg-danger-light border border-danger rounded-xl px-5 py-3 flex items-center justify-between animate-slide-up">
         <p class="text-danger font-semibold text-sm">{{ $stats['defaulted'] }} defaulted contract{{ $stats['defaulted'] !== 1 ? 's' : '' }} require attention.</p>
-        <a href="{{ route('admin.contracts.index') }}?status=defaulted" class="text-danger text-xs underline">View →</a>
+        <a href="{{ route('admin.contracts.index') }}?status=defaulted" class="text-danger text-xs font-medium underline">View →</a>
     </div>
     @endif
 
     {{-- Quick links --}}
-    <div class="flex flex-wrap gap-3">
+    <div class="flex flex-wrap gap-3 animate-slide-up" style="animation-delay: 280ms">
         <a href="{{ route('admin.users.index') }}" class="btn-primary">Manage Users</a>
         <a href="{{ route('admin.contracts.index') }}" class="btn-secondary">All Contracts</a>
     </div>
 
     {{-- Recent payments --}}
-    <div>
+    <div class="animate-slide-up" style="animation-delay: 320ms">
         <h2 class="text-base font-semibold mb-3">Recent Payments</h2>
-        <div class="bg-white rounded-xl border border-neutral-100 overflow-hidden">
+        <div class="table-shell">
             @if($recentPayments->isEmpty())
                 <p class="px-5 py-8 text-neutral-400 text-sm text-center">No payments yet.</p>
             @else
             <table class="w-full text-sm">
                 <thead>
-                    <tr class="border-b border-neutral-100">
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Date</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Contract</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Driver</th>
-                        <th class="px-4 py-3 text-right text-xs font-semibold text-neutral-500 uppercase">Amount</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Channel</th>
+                    <tr>
+                        <th>Date</th>
+                        <th>Contract</th>
+                        <th>Driver</th>
+                        <th class="text-right">Amount</th>
+                        <th>Channel</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-neutral-50">
+                <tbody class="divide-y divide-neutral-100">
                     @foreach($recentPayments as $pay)
-                    <tr class="hover:bg-neutral-50">
+                    <tr>
                         <td class="px-4 py-2.5 text-xs text-neutral-500">{{ $pay->payment_date->format('d M Y') }}</td>
                         <td class="px-4 py-2.5 text-xs font-medium">{{ $pay->contract->contract_number }}</td>
                         <td class="px-4 py-2.5 text-xs">{{ $pay->driver?->name ?? '—' }}</td>

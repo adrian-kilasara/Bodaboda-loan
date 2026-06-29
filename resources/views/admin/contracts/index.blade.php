@@ -3,7 +3,7 @@
 
 @section('content')
 <div class="py-6 space-y-4">
-    <form method="GET" action="{{ route('admin.contracts.index') }}" class="flex gap-3 items-end">
+    <form method="GET" action="{{ route('admin.contracts.index') }}" class="card p-4 flex gap-3 items-end animate-slide-up">
         <div>
             <label class="form-label">Status</label>
             <select name="status" class="form-input w-44">
@@ -14,28 +14,28 @@
             </select>
         </div>
         <button type="submit" class="btn-primary">Filter</button>
-        <a href="{{ route('admin.contracts.index') }}" class="btn-secondary">Clear</a>
+        <a href="{{ route('admin.contracts.index') }}" class="btn-ghost">Clear</a>
     </form>
 
-    <div class="bg-white rounded-xl border border-neutral-100 overflow-hidden">
+    <div class="table-shell animate-slide-up" style="animation-delay: 60ms">
         <table class="w-full text-sm">
             <thead>
-                <tr class="border-b border-neutral-100">
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Contract</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Motorcycle</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Owner</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Driver</th>
-                    <th class="px-4 py-3 text-right text-xs font-semibold text-neutral-500 uppercase">Total Payable</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Status</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Started</th>
+                <tr>
+                    <th>Contract</th>
+                    <th>Motorcycle</th>
+                    <th>Owner</th>
+                    <th>Driver</th>
+                    <th class="text-right">Total Payable</th>
+                    <th>Status</th>
+                    <th>Started</th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-neutral-50">
+            <tbody class="divide-y divide-neutral-100">
                 @foreach($contracts as $contract)
                 @php
                     $map=['active'=>'badge-success','completed'=>'badge-success','pending_enrolment'=>'badge-pending','defaulted'=>'badge-danger','terminated'=>'badge-pending','draft'=>'badge-pending'];
                 @endphp
-                <tr class="hover:bg-neutral-50">
+                <tr>
                     <td class="px-4 py-3 font-semibold text-xs">{{ $contract->contract_number }}</td>
                     <td class="px-4 py-3 text-xs">{{ $contract->motorcycle->registration_number }}</td>
                     <td class="px-4 py-3 text-xs">{{ $contract->owner?->name ?? '—' }}</td>
